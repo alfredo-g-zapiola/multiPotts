@@ -1,9 +1,9 @@
 Package: multiPotts
 Type: Package
-Title: What the Package Does Using Title Case
+Title: Multivariate Potts model
 Version: 1.0
 Date: 2022-11-29
-Author: Your Name
+Author: Morandi, Zapiola, Colombara
 Maintainer: Your Name <your@email.com>
 Description: More details about what the package does. See
        <http://cran.r-project.org/doc/manuals/r-release/R-exts.html#The-DESCRIPTION-file>
@@ -14,3 +14,4 @@ Encoding: UTF-8
 RoxygenNote: 7.1.2
 Imports: Rcpp (>= 1.0.9)
 LinkingTo: Rcpp, RcppArmadillo
+RequiresCompilation: Yes
