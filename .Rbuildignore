@@ -1,3 +1,4 @@
+^.*\Cpp_code
 ^.git$
 ^.*\.Rproj$
 ^\.Rproj\.user$
