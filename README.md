@@ -1,5 +1,11 @@
 ## multiPotts: Gibbs sampler for the multivariate Potts model.
-
+### Authors:
+* Riccardo Morandi
+* Francesco De Caro
+* Simone Colombara
+* Chiara Schembri
+* Alessia Cotroneo
+* Alfredo G. Zapiola
 #### Installation steps:
 ##### Option 1
 1. Clone the repository with \
