@@ -3,15 +3,14 @@ Type: Package
 Title: Multivariate Potts model
 Version: 1.0
 Date: 2022-11-29
-Author: Morandi, Zapiola, Colombara
-Maintainer: Your Name <your@email.com>
-Description: More details about what the package does. See
-       <http://cran.r-project.org/doc/manuals/r-release/R-exts.html#The-DESCRIPTION-file>
-       for details on how to write this part.
+Author: R. Morandi, A. G.Zapiola, S. Colombara, F. De Caro, C. Shembri
+Maintainer: Riccardo Morandi <riccardo3.morandi@mail.polimi.it>, Alfredo G. Zapiola <agimenezzapiola@gmail.com>
+Description: A library that fits the potts model utilising a mixture of multivariate normal distributions. The MCMC is run with Rccp.
 License: GPL (>= 2)
 Suggests: tinytest
 Encoding: UTF-8
 RoxygenNote: 7.1.2
 Imports: Rcpp (>= 1.0.9)
-LinkingTo: Rcpp, RcppArmadillo
+LinkingTo: Rcpp, RcppArmadillo, RcppProgress
 RequiresCompilation: Yes
+Enhances: bayesImageS
