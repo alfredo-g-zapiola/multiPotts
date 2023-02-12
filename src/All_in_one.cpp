@@ -281,10 +281,10 @@ arma::mat outer(const arma::colvec & a, const arma::colvec & b){
   return ret;
 }
 
-// updates the lambdaj in the gibbs sampler nD model 
-arma::cube gibbsLambda(const arma::rowvec & nZ, const arma::mat & Y,
-                       const std::vector<arma::uvec> & blocks, const arma::umat & z,
-                       const arma::cube & pr_sigma_v0, const arma::rowvec & pr_sigma_n0, const arma::mat & mu)
+// updates the lambdaj in the gibbs sampler nD model (nZ , SSY, z, pr_sigma_v0, pr_sigma_n0)
+arma::cube gibbsLambda(const arma::rowvec & nZ, const arma::cube & SSY,
+                       const arma::umat & z, const arma::cube & pr_sigma_v0,
+                       const arma::rowvec & pr_sigma_n0)
 {
   // avoid dividing by zero if one of the mixture components is empty
   arma::cube ret = arma::zeros(pr_sigma_v0.n_rows,pr_sigma_v0.n_cols,pr_sigma_v0.n_slices);
@@ -293,44 +293,7 @@ arma::cube gibbsLambda(const arma::rowvec & nZ, const arma::mat & Y,
   for (unsigned j=0; j < nZ.n_elem; j++)
   {
     if(nZ(j)!=0){
-      arma::mat A = arma::zeros(Y.n_rows,Y.n_rows);
-      for (unsigned b=0; b < blocks.size(); b++){
-        const arma::uvec block = blocks[b];
-        for (unsigned i=0; i < block.size(); i++){
-          if(z(block(i),j)==1){
-            A = A + outer((Y.col(block(i)) - mu.col(z.row(block(i)).index_max())),(Y.col(block(i)) - mu.col(z.row(block(i)).index_max())));
-          }
-        }
-      }
-      arma::mat Vp = (pr_sigma_v0.slice(j).i() + A).i();
-      ret.slice(j) = rwishart(np(j), Vp);
-    }
-    else
-      ret.slice(j) = rwishart(pr_sigma_n0(j),pr_sigma_v0.slice(j));
-  }
-  
-  return ret;
-}
-
-// updates the lambdaj in the gibbs sampler mD model for the GMM
-// we don't have information about the blocks in this case
-arma::cube gibbsLambdanoblocks(const arma::rowvec & nZ, const arma::mat & Y, const arma::umat & z,
-                               const arma::cube & pr_sigma_v0, const arma::rowvec & pr_sigma_n0, const arma::mat & mu)
-{
-  // avoid dividing by zero if one of the mixture components is empty
-  arma::cube ret = arma::zeros(pr_sigma_v0.n_rows,pr_sigma_v0.n_cols,pr_sigma_v0.n_slices);
-  arma::rowvec np = nZ + pr_sigma_n0;
-  arma::cube A = arma::zeros(pr_sigma_v0.n_rows,pr_sigma_v0.n_cols,pr_sigma_v0.n_slices);
-  
-  for(unsigned i = 0; i < Y.n_cols;i++){
-    unsigned j = z.row(i).index_max();
-    A.slice(j) = A.slice(j) + outer((Y.col(i)-mu.col(j)),(Y.col(i)-mu.col(j)));
-  }
-  
-  for (unsigned j=0; j < nZ.n_elem; j++)
-  {
-    if(nZ(j)!=0){
-      arma::mat Vp = (pr_sigma_v0.slice(j).i() + A.slice(j)).i();
+      arma::mat Vp = (pr_sigma_v0.slice(j).i() + SSY.slice(j)).i();
       ret.slice(j) = rwishart(np(j), Vp);
     }
     else
@@ -448,13 +411,15 @@ void updateStats(const arma::colvec & y, const arma::umat & z,
   }
 }
 
-// updates nZ count of each cluster, sumY sum of each cluster value in the mD potts model mdupdateStats(Y, z, nZ, sumY);
-void mdupdateStats(const arma::mat & Y, const arma::umat & z,
-                   arma::rowvec & nZ, arma::mat & sumY)
+// updates nZ count of each cluster, sumY sum of each cluster value in the mD potts model;
+void mdupdateStats(const arma::mat & Y, const arma::umat & z, const arma::mat & mu,
+                   arma::rowvec & nZ, arma::mat & sumY, arma::cube & SSY)
 {
   nZ.zeros();
   sumY.zeros();
+  SSY.zeros();
   
+#pragma omp parallel for
   for (unsigned i=0; i < Y.n_cols; i++)
   {
     for (unsigned j=0; j < z.n_cols; j++)
@@ -463,6 +428,7 @@ void mdupdateStats(const arma::mat & Y, const arma::umat & z,
       {
         nZ[j]++;
         sumY.col(j) += Y.col(i);
+        SSY.slice(j) += outer(Y.col(i) - mu.col(j),Y.col(i) - mu.col(j));
       }
     }
   }
@@ -550,6 +516,22 @@ unsigned pseudoBeta(const arma::umat & neigh, const std::vector<arma::uvec> & bl
   return 0;
 }
 
+// Given the allocation matrix z it returns the allocation vecor vec to be salso compatible
+void salsovec(const arma::umat& z, arma::rowvec & allocvec)
+{
+#pragma omp parallel for
+  for (unsigned i=0; i < z.n_rows-1; i++) // since the last is the element put in place if the pixel is in the border
+  {
+    for (unsigned j=0; j < z.n_cols; j++)
+    {
+      if (z(i,j) == 1)
+      {
+        allocvec[i] = j;
+      }
+    }
+  }
+}
+
 
 // monodimensional gaussian mixture model gibbs sampler
 // inputs:
@@ -563,10 +545,10 @@ unsigned pseudoBeta(const arma::umat & neigh, const std::vector<arma::uvec> & bl
 //    sigma: the shape parameter of the gamma for the sd prior (vector)
 //    sigma.nu: the rate parameters of the gamma for the sd prior (vector)
 //    lambda: the parameters of the dirichlet for the weights of the mixture (vector)
-
-SEXP gibbsGMM1d(SEXP yS, SEXP itS, SEXP biS, SEXP prS) {
+//salitS number of allocactions to save in a salso compatible manner (matrix each row is a iteration)
+SEXP gibbsGMM1d(SEXP yS, SEXP prS, SEXP itS, SEXP biS,SEXP salitS) {
   BEGIN_RCPP
-  unsigned niter = Rcpp::as<unsigned>(itS), nburn = Rcpp::as<unsigned>(biS);
+  unsigned niter = Rcpp::as<unsigned>(itS), nburn = Rcpp::as<unsigned>(biS), nsalso = Rcpp::as<unsigned>(salitS);
   
   Rcpp::NumericVector yR(yS);       // creates Rcpp vector from SEXP
   Rcpp::NumericVector yunique = Rcpp::unique(yR);
@@ -600,12 +582,14 @@ SEXP gibbsGMM1d(SEXP yS, SEXP itS, SEXP biS, SEXP prS) {
   }
   wt = wt/arma::sum(wt); // normalize to sum to 1
   arma::umat z = randomIndices(y.n_elem, k);
-  
+  int nvert = y.n_elem;
   arma::mat mu_save = arma::zeros(niter,k); // history of simulated values of mu
   arma::mat sd_save = arma::zeros(niter,k); // history of simulated values of sigma
   arma::mat wt_save = arma::zeros(niter,k); // history of simulated values of lambda
-  arma::umat alloc  = arma::zeros<arma::umat>(y.n_elem, k);
+  arma::umat alloc  = arma::zeros<arma::umat>(nvert, k);
   arma::rowvec nZ(k), sumY(k), sqDiff(k);
+  arma::mat salout = arma::zeros(nsalso,nvert); // history of allocations salso compatible
+  arma::rowvec allocvec = arma::zeros(nvert);
   
   Rcpp::Rcout << niter << " iterations discarding the first " << nburn << " as burn-in." << "\n";
   bool display_progress = true ;
@@ -622,6 +606,10 @@ SEXP gibbsGMM1d(SEXP yS, SEXP itS, SEXP biS, SEXP prS) {
     arma::mat alpha = dnorm(yunique, ymatch, mu, sd);
     classify(z, alloc, arma::log(wt), alpha);
     updateStats(y, z, nZ, sumY, sqDiff);
+    if(it >= niter - nsalso){
+      salsovec(z,allocvec);
+      salout.row(it - niter + nsalso) = allocvec;
+    }
     
     // update means
     mu = gibbsMeans(nZ, sumY, pr_mu, pr_mu_tau, sd);
@@ -642,7 +630,8 @@ SEXP gibbsGMM1d(SEXP yS, SEXP itS, SEXP biS, SEXP prS) {
     Rcpp::Named("mu")    = mu_save,  // history of simulated values of mu
     Rcpp::Named("sigma") = sd_save,  // history of simulated values of sigma
     Rcpp::Named("z")     = z,        // final allocation matrix
-    Rcpp::Named("lambda") = wt_save  // history of simulated values of lambda
+    Rcpp::Named("lambda") = wt_save,  // history of simulated values of lambda
+    Rcpp::Named("salso_hist") = salout    // history of allocations salso compatible
   );
   END_RCPP
 }
@@ -659,10 +648,10 @@ SEXP gibbsGMM1d(SEXP yS, SEXP itS, SEXP biS, SEXP prS) {
 //    sigma.V0: the V= matrix for the wishart prior of the covariance matrices (3D array)
 //    sigma.n0: the n0 parameters of the wishart prior for the covariance matrices (vector)
 //    lambda: the parameters of the dirichlet for the weights of the mixture (vector)
-
-SEXP gibbsGMMmd(SEXP yS, SEXP itS, SEXP biS, SEXP prS) {
+//salitS number of allocactions to save in a salso compatible manner (matrix each row is a iteration)
+SEXP gibbsGMMmd(SEXP yS, SEXP prS, SEXP itS, SEXP biS, SEXP salitS) {
   BEGIN_RCPP
-  unsigned niter = Rcpp::as<unsigned>(itS), nburn = Rcpp::as<unsigned>(biS);
+  unsigned niter = Rcpp::as<unsigned>(itS), nburn = Rcpp::as<unsigned>(biS), nsalso = Rcpp::as<unsigned>(salitS);
   
   //directly creating arma matrix/cube from SEXP
   arma::mat Y = Rcpp::as<arma::mat>(yS); 
@@ -702,7 +691,6 @@ SEXP gibbsGMMmd(SEXP yS, SEXP itS, SEXP biS, SEXP prS) {
   }
   
   Rcpp::RNGScope scope;               // initialize random number generator
-  //randomly initializing the weights vector, should I initialize them from the prior distribution? 
   arma::rowvec wt(k);
   for (unsigned j=0; j<k; j++)
   {
@@ -717,7 +705,11 @@ SEXP gibbsGMMmd(SEXP yS, SEXP itS, SEXP biS, SEXP prS) {
   arma::umat alloc = arma::zeros<arma::umat>(nvert, k); // number of allocations of each elem to each cluster 
   arma::rowvec nZ(k);                                       // number of element in each cluster
   arma::mat sumY(d,k);                                      // sum of the values in each cluster, used to compute the means per cluster
-  mdupdateStats(Y, z, nZ, sumY);                            // updating the data structures following the random initialization
+  arma::cube SSY = arma::zeros(d,d,k);                      // the matrix of sum (y-mu)(y-mu)^t for each cluster 
+  mdupdateStats(Y, z, mu, nZ, sumY, SSY);                   // updating the data structures following the random initialization
+  arma::mat salout = arma::zeros(nsalso,nvert);             // history of allocations salso compatible
+  arma::rowvec allocvec(nvert);
+  
   
   Rcpp::Rcout << niter << " iterations discarding the first " << nburn << " as burn-in." << "\n";
   bool display_progress = true ;
@@ -733,14 +725,18 @@ SEXP gibbsGMMmd(SEXP yS, SEXP itS, SEXP biS, SEXP prS) {
     // update labels
     arma::mat alpha = dnorm_field(Y, mu, lambads);
     classify(z, alloc, arma::log(wt), alpha);
-    mdupdateStats(Y, z, nZ, sumY);
+    mdupdateStats(Y, z, mu, nZ, sumY, SSY);
+    if(it >= niter - nsalso){
+      salsovec(z,allocvec);
+      salout.row(it - niter + nsalso) = allocvec;
+    }
     
     // update means
     mu = mdgibbsMeans(nZ, sumY, pr_mu, pr_mu_sigma_inv, lambads);
     mu_save.slice(it) = mu;
     
     // update standard deviations
-    lambads = gibbsLambdanoblocks(nZ, Y ,z, pr_sigma_v0, pr_sigma_n0, mu);
+    lambads = gibbsLambda(nZ, SSY, z, pr_sigma_v0, pr_sigma_n0);
     arma::cube temp_sigma(d,d,k);
     for( unsigned int i = 0; i < k; i++){
       temp_sigma.slice(i) = lambads.slice(i).i();
@@ -758,7 +754,8 @@ SEXP gibbsGMMmd(SEXP yS, SEXP itS, SEXP biS, SEXP prS) {
     Rcpp::Named("mu")    = mu_save,  // history of simulated values of mu
     Rcpp::Named("sigma") = sigmas_save,  // history of simulated values of sigma
     Rcpp::Named("z")     = z,        // final allocation matrix
-    Rcpp::Named("lambda") = wt_save  // history of simulated values of lambda
+    Rcpp::Named("lambda") = wt_save,  // history of simulated values of lambda
+    Rcpp::Named("salso_hist") = salout   // history of allocations salso compatible
   );
   END_RCPP
 }
@@ -767,16 +764,17 @@ SEXP gibbsGMMmd(SEXP yS, SEXP itS, SEXP biS, SEXP prS) {
 // wrapper function for the gibbs sampler for the GMM
 // this identifies wheter we are in the 1d or md case and calls the appropriate function
 // [[Rcpp::export]]
-SEXP GibbsGMM(SEXP yS, SEXP itS, SEXP biS, SEXP prS) {
+SEXP GibbsGMM(SEXP yS, SEXP prS, SEXP itS, SEXP biS, SEXP salitS) {
   if(Rf_isMatrix(yS))
-    return gibbsGMMmd(yS, itS, biS, prS);
+    return gibbsGMMmd(yS, prS, itS, biS, salitS);
   else if(Rf_isVector(yS))
-    return gibbsGMM1d(yS, itS, biS, prS);
+    return gibbsGMM1d(yS, prS, itS, biS, salitS);
   else {
     Rcpp::Rcout << " the data must be either a vector or a matrix " << "\n";
     return Rcpp::List(); //return an empty list
   }
 }
+
 
 
 // monodimensional Potts model gibbs sampler
@@ -789,17 +787,19 @@ SEXP GibbsGMM(SEXP yS, SEXP itS, SEXP biS, SEXP prS) {
 // bs is the blocks object from BayesImageS
 // prS is a list of priors for the model, it includes:
 //    mu: the prior mean of the normal distr of the mean of each cluster (vector)
+//    mu.sd: the prior sd of the normal distr of the mean of each cluster (vector)
 //    sigma the shape parameter of the gamma for the sd prior (vector)
 //    sigma.nu the rate parameters of the gamma for the sd prior (vector)
 // itS total number of iterations
 // biS burn in iterations
+//salitS number of allocactions to save in a salso compatible manner (matrix each row is a iteration)
 
-SEXP gibbsPotts1d(SEXP yS, SEXP betaS, SEXP muS, SEXP sdS, SEXP nS, SEXP bS, SEXP prS, SEXP itS, SEXP biS) {
+SEXP gibbsPotts1d(SEXP yS, SEXP betaS, SEXP muS, SEXP sdS, SEXP nS, SEXP bS, SEXP prS, SEXP itS, SEXP biS, SEXP salitS) {
   BEGIN_RCPP
   Rcpp::NumericVector yR(yS), muR(muS), sdR(sdS); // creates Rcpp vector from SEXP
   Rcpp::IntegerMatrix nR(nS);             // creates Rcpp matrix from SEXP
   Rcpp::List bR(bS), prR(prS);
-  unsigned niter = Rcpp::as<unsigned>(itS), nburn = Rcpp::as<unsigned>(biS);
+  unsigned niter = Rcpp::as<unsigned>(itS), nburn = Rcpp::as<unsigned>(biS), nsalso = Rcpp::as<unsigned>(salitS);
   double beta = Rcpp::as<double>(betaS);
   
   Rcpp::NumericVector yunique = Rcpp::unique(yR);
@@ -807,7 +807,6 @@ SEXP gibbsPotts1d(SEXP yS, SEXP betaS, SEXP muS, SEXP sdS, SEXP nS, SEXP bS, SEX
   // no easy conversion from IntegerVector to uvec
   arma::uvec ymatch = unsign(ymatchR) - 1;
   arma::umat neigh = unsignMx(nR) - 1;
-  
   
   // block index vectors are not symmetric
   std::vector<arma::uvec> blocks;
@@ -845,11 +844,13 @@ SEXP gibbsPotts1d(SEXP yS, SEXP betaS, SEXP muS, SEXP sdS, SEXP nS, SEXP bS, SEX
   arma::rowvec pr_sd_SS = pr_sd_nu % arma::square(pr_sd); // Schur product
   
   arma::umat z = randomIndices(nvert, k);
-  arma::mat mu_save = arma::zeros(niter, k); // history of simulated values of mu
-  arma::mat sd_save = arma::zeros(niter, k); // history of simulated values of sigma
-  arma::vec sum_save = arma::zeros(niter);   // sum of identical neighbours
+  arma::mat mu_save = arma::zeros(niter, k);   // history of simulated values of mu
+  arma::mat sd_save = arma::zeros(niter, k);   // history of simulated values of sigma
+  arma::vec sum_save = arma::zeros(niter);     // sum of identical neighbours
   arma::umat alloc = arma::zeros<arma::umat>(nR.nrow(), k);
   arma::rowvec nZ(k), sumY(k), sqDiff(k);
+  arma::mat salout = arma::zeros(nsalso,nvert); // history of allocations salso compatible
+  arma::rowvec allocvec = arma::zeros(nvert);
   
   Rcpp::Rcout << niter << " iterations discarding the first " << nburn << " as burn-in." << "\n";
   bool display_progress = true ;
@@ -869,6 +870,10 @@ SEXP gibbsPotts1d(SEXP yS, SEXP betaS, SEXP muS, SEXP sdS, SEXP nS, SEXP bS, SEX
     gibbsLabels(neigh, blocks, z, alloc, beta, alpha);
     updateStats(y, z, nZ, sumY, sqDiff);
     sum_save(it) = sum_ident(z, neigh, blocks);
+    if(it >= niter - nsalso){
+      salsovec(z,allocvec);
+      salout.row(it - niter + nsalso) = allocvec;
+    }
     
     // update means
     mu = gibbsMeans(nZ, sumY, pr_mu, pr_mu_tau, sd);
@@ -879,19 +884,13 @@ SEXP gibbsPotts1d(SEXP yS, SEXP betaS, SEXP muS, SEXP sdS, SEXP nS, SEXP bS, SEX
     sd_save.row(it) = sd;
   }
   
-  arma::uvec e(z.n_rows-1);
-  arma::mat ne = arma::zeros(z.n_cols, z.n_rows-1);
-  neighbj(ne, e, z, neigh);
-  
   return Rcpp::List::create(
-    Rcpp::Named("alloc") = alloc,     // count of allocations to each component
-    Rcpp::Named("mu")    = mu_save,   // sample of mu
-    Rcpp::Named("sigma") = sd_save,   // sample of sigma
-    Rcpp::Named("z")     = z,         // final sample from Gibbs distribution
-    Rcpp::Named("sum") = sum_save,    // sum of identical neighbours
-    Rcpp::Named("e") = e,             // allocation vector
-    Rcpp::Named("ne") = ne            // counts of like neighbours
-    
+    Rcpp::Named("alloc") = alloc,         // count of allocations to each component
+    Rcpp::Named("mu")    = mu_save,       // sample of mu
+    Rcpp::Named("sigma") = sd_save,       // sample of sigma
+    Rcpp::Named("z")     = z,             // final sample from Gibbs distribution
+    Rcpp::Named("sum") = sum_save,        // sum of identical neighbours
+    Rcpp::Named("salso_hist") = salout    // history of allocations salso compatible
   );
   END_RCPP
 }
@@ -909,11 +908,12 @@ SEXP gibbsPotts1d(SEXP yS, SEXP betaS, SEXP muS, SEXP sdS, SEXP nS, SEXP bS, SEX
 //    mu: the prior mean of the normal distr of the mean of each cluster (matrix)
 //    mu.sigma the covariance matrices of the normal distr of the mean of each cluster (3D array)
 //    sigma.V0 the V= matrix for the wishart prior of the covariance matrices (3D array)
-//    sigma.no the n0 parameters of the wishart prior for the covariance matrices (vector)
+//    sigma.n0 the n0 parameters of the wishart prior for the covariance matrices (vector)
 // itS total number of iterations
 // biS burn in iterations
+//salitS number of allocactions to save in a salso compatible manner (matrix each row is a iteration)
 
-SEXP gibbsPottsmd(SEXP yS, SEXP betaS, SEXP muS, SEXP sigmaS, SEXP nS, SEXP bS, SEXP prS, SEXP itS, SEXP biS) {
+SEXP gibbsPottsmd(SEXP yS, SEXP betaS, SEXP muS, SEXP sigmaS, SEXP nS, SEXP bS, SEXP prS, SEXP itS, SEXP biS, SEXP salitS) {
   BEGIN_RCPP
   //directly creating arma matrix/cube from SEXP
   arma::mat Y = Rcpp::as<arma::mat>(yS); 
@@ -922,7 +922,7 @@ SEXP gibbsPottsmd(SEXP yS, SEXP betaS, SEXP muS, SEXP sigmaS, SEXP nS, SEXP bS, 
   
   Rcpp::IntegerMatrix nR(nS);// creates Rcpp matrix from SEXP
   Rcpp::List bR(bS), prR(prS);
-  unsigned niter = Rcpp::as<unsigned>(itS), nburn = Rcpp::as<unsigned>(biS);
+  unsigned niter = Rcpp::as<unsigned>(itS), nburn = Rcpp::as<unsigned>(biS), nsalso = Rcpp::as<unsigned>(salitS);
   double beta = Rcpp::as<double>(betaS);
   
   // no easy conversion from IntegerVector to uvec
@@ -947,7 +947,7 @@ SEXP gibbsPottsmd(SEXP yS, SEXP betaS, SEXP muS, SEXP sigmaS, SEXP nS, SEXP bS, 
   int nvert = nR.nrow();
   if (nvert != Y.n_cols)
   {
-    throw std::invalid_argument("mismatch between observations and neighbourhood matrix");
+    throw std::invalid_argument("Mismatch between observations and neighbourhood matrix");
   }
   
   int k = Rcpp::as<int>(prR["k"]);
@@ -956,7 +956,7 @@ SEXP gibbsPottsmd(SEXP yS, SEXP betaS, SEXP muS, SEXP sigmaS, SEXP nS, SEXP bS, 
   arma::cube pr_sigma_v0 = Rcpp::as<arma::cube>(prR["sigma.V0"]);
   arma::rowvec pr_sigma_n0 = Rcpp::as<arma::rowvec>(prR["sigma.n0"]);
   
-  // to avoid extra inversion of the sigma, pr_mu_sigma and pr_sigma
+  // to avoid extra inversion of the sigma, pr_mu_sigma
   arma::cube lambads = arma::zeros(d,d,k);
   arma::cube pr_mu_sigma_inv = arma::zeros(d,d,k); //B0^-1
   for (unsigned j = 0; j < pr_mu_sigma.n_slices; j++) {
@@ -964,14 +964,17 @@ SEXP gibbsPottsmd(SEXP yS, SEXP betaS, SEXP muS, SEXP sigmaS, SEXP nS, SEXP bS, 
     pr_mu_sigma_inv.slice(j) = pr_mu_sigma.slice(j).i();
   }
   
-  arma::umat z = randomIndices(nvert, k);                   //randomly allocating the vertices
+  arma::umat z = randomIndices(nvert, k);                   // randomly allocating the vertices
   arma::cube mu_save = arma::zeros(d,k,niter);              // history of simulated values of mu
   arma::field<arma::cube> sigmas_save(niter);               // history of simulated values of sigma
   arma::vec sum_save = arma::zeros(niter);                  // sum of identical neighbours
   arma::umat alloc = arma::zeros<arma::umat>(nR.nrow(), k); // number of allocations of each elem to each cluster 
   arma::rowvec nZ(k);                                       // number of element in each cluster
   arma::mat sumY(d,k);                                      // sum of the values in each cluster, used to compute the means per cluster
-  mdupdateStats(Y, z, nZ, sumY);                            // updating the data structures following the random initialization
+  arma::cube SSY = arma::zeros(d,d,k);                      // the matrix of sum (y-mu)(y-mu)^t for each cluster 
+  mdupdateStats(Y, z, mu, nZ, sumY, SSY);                   // updating the data structures following the random initialization
+  arma::mat salout = arma::zeros(nsalso,nvert);             // history of allocations salso compatible
+  arma::rowvec allocvec(nvert);
   
   Rcpp::Rcout << niter << " iterations discarding the first " << nburn << " as burn-in." << "\n";
   bool display_progress = true ;
@@ -989,15 +992,19 @@ SEXP gibbsPottsmd(SEXP yS, SEXP betaS, SEXP muS, SEXP sigmaS, SEXP nS, SEXP bS, 
     // update labels
     arma::mat alpha = dnorm_field(Y, mu, lambads);
     gibbsLabels(neigh, blocks, z, alloc, beta, alpha);
-    mdupdateStats(Y, z, nZ, sumY);
+    mdupdateStats(Y, z, mu, nZ, sumY, SSY);
     sum_save(it) = sum_ident(z, neigh, blocks);
+    if(it >= niter - nsalso){
+      salsovec(z,allocvec);
+      salout.row(it - niter + nsalso) = allocvec;
+    }
     
     // update means
     mu = mdgibbsMeans(nZ, sumY, pr_mu, pr_mu_sigma_inv, lambads);
     mu_save.slice(it) = mu;
     
     // update standard deviations
-    lambads = gibbsLambda(nZ, Y, blocks, z, pr_sigma_v0, pr_sigma_n0, mu);
+    lambads = gibbsLambda(nZ, SSY, z, pr_sigma_v0, pr_sigma_n0);
     arma::cube temp_sigma(d,d,k);
     for( unsigned int i = 0; i < k; i++){
       temp_sigma.slice(i) = lambads.slice(i).i();
@@ -1005,18 +1012,13 @@ SEXP gibbsPottsmd(SEXP yS, SEXP betaS, SEXP muS, SEXP sigmaS, SEXP nS, SEXP bS, 
     sigmas_save(it) = temp_sigma;
   }
   
-  arma::uvec e(z.n_rows-1);                                 // final allocation
-  arma::mat ne = arma::zeros(z.n_cols, z.n_rows-1);         //count of like neighbours
-  neighbj(ne, e, z, neigh);
-  
   return Rcpp::List::create(
     Rcpp::Named("alloc") = alloc,                           // count of allocations to each component
     Rcpp::Named("mu")    = mu_save,                         // history of simulated values of mu
     Rcpp::Named("sigmas") = sigmas_save,                    // history of simulated values of sigma
     Rcpp::Named("z")     = z,                               // final sample from Gibbs distribution
     Rcpp::Named("sum") = sum_save,                          // sum of identical neighbours
-    Rcpp::Named("e") = e,                                   // allocation vector
-    Rcpp::Named("ne") = ne                                  // counts of like neighbours
+    Rcpp::Named("salso_hist") = salout                      // history of allocations salso compatible
   );
   END_RCPP
 }
@@ -1025,11 +1027,11 @@ SEXP gibbsPottsmd(SEXP yS, SEXP betaS, SEXP muS, SEXP sigmaS, SEXP nS, SEXP bS, 
 // wrapper function for the gibbs sampler for the potts model with fixed beta
 // this identifies wheter we are in the 1d or md case and calls the appropriate function
 // [[Rcpp::export]]
-SEXP GibbsPotts(SEXP yS, SEXP betaS, SEXP muS, SEXP sigmaS, SEXP nS, SEXP bS, SEXP prS, SEXP itS, SEXP biS) {
+SEXP GibbsPotts(SEXP yS, SEXP betaS, SEXP muS, SEXP sigmaS, SEXP nS, SEXP bS, SEXP prS, SEXP itS, SEXP biS, SEXP salitS) {
   if(Rf_isMatrix(yS))
-    return gibbsPottsmd(yS, betaS, muS, sigmaS, nS, bS, prS, itS, biS);
+    return gibbsPottsmd(yS, betaS, muS, sigmaS, nS, bS, prS, itS, biS, salitS);
   else if(Rf_isVector(yS))
-    return gibbsPotts1d(yS, betaS, muS, sigmaS, nS, bS, prS, itS, biS);
+    return gibbsPotts1d(yS, betaS, muS, sigmaS, nS, bS, prS, itS, biS, salitS);
   else {
     Rcpp::Rcout << " the data must be either a vector or a matrix " << "\n";
     return Rcpp::List(); //return an empty list
@@ -1055,14 +1057,14 @@ SEXP GibbsPotts(SEXP yS, SEXP betaS, SEXP muS, SEXP sigmaS, SEXP nS, SEXP bS, SE
 //    init optional value used to initalize the beta to start from
 //    adaptive optional,if omitted the default is adaptive, if adaptive = NULL then the bandwidth is fixed
 //    target optional, used to dedtermine how fast to change the bandwidth int the adaptive case (don't change if it is not strictly necessary)
-
-SEXP mcmcPotts1d(SEXP yS, SEXP nS, SEXP bS, SEXP itS, SEXP biS, SEXP prS, SEXP mhS)
+//salitS number of allocactions to save in a salso compatible manner (matrix each row is a iteration)
+SEXP mcmcPotts1d(SEXP yS, SEXP nS, SEXP bS, SEXP itS, SEXP biS, SEXP prS, SEXP mhS, SEXP salitS)
 {
   BEGIN_RCPP
   Rcpp::NumericVector yR(yS);       // creates Rcpp vector from SEXP
   Rcpp::IntegerMatrix nR(nS);       // creates Rcpp matrix from SEXP
   Rcpp::List bR(bS), prR(prS), mhR(mhS);
-  unsigned niter = Rcpp::as<unsigned>(itS), nburn = Rcpp::as<unsigned>(biS);
+  unsigned niter = Rcpp::as<unsigned>(itS), nburn = Rcpp::as<unsigned>(biS), nsalso = Rcpp::as<unsigned>(salitS);
   
   double bw = Rcpp::as<double>(mhR["bandwidth"]);
   double init_beta = 0.0;
@@ -1151,6 +1153,8 @@ SEXP mcmcPotts1d(SEXP yS, SEXP nS, SEXP bS, SEXP itS, SEXP biS, SEXP prS, SEXP m
   
   arma::umat alloc = arma::zeros<arma::umat>(nR.nrow(), k);
   arma::rowvec nZ(k), sumY(k), sqDiff(k);
+  arma::mat salout = arma::zeros(nsalso,nvert); // history of allocations salso compatible
+  arma::rowvec allocvec = arma::zeros(nvert);
   unsigned accept = 0, acc_old = 0;
   Rcpp::Rcout << niter << " iterations discarding the first " << nburn << " as burn-in." << "\n";
   
@@ -1171,6 +1175,10 @@ SEXP mcmcPotts1d(SEXP yS, SEXP nS, SEXP bS, SEXP itS, SEXP biS, SEXP prS, SEXP m
     gibbsLabels(neigh, blocks, z, alloc, beta, alpha);
     updateStats(y, z, nZ, sumY, sqDiff);
     sum_save(it) = sum_ident(z, neigh, blocks);
+    if(it >= niter - nsalso){
+      salsovec(z,allocvec);
+      salout.row(it - niter + nsalso) = allocvec;
+    }
     
     // update means
     mu = gibbsMeans(nZ, sumY, pr_mu, pr_mu_tau, sd);
@@ -1196,10 +1204,6 @@ SEXP mcmcPotts1d(SEXP yS, SEXP nS, SEXP bS, SEXP itS, SEXP biS, SEXP prS, SEXP m
     beta_save[it] = beta;
   }
   
-  arma::uvec e(z.n_rows-1);
-  arma::mat ne = arma::zeros(z.n_cols, z.n_rows-1);
-  neighbj(ne, e, z, neigh);
-  
   Rcpp::List result = Rcpp::List::create(
     Rcpp::Named("alloc") = alloc,                           // count of allocations to each component
     Rcpp::Named("mu")    = mu_save,                         // history of simulated values of mu
@@ -1208,8 +1212,7 @@ SEXP mcmcPotts1d(SEXP yS, SEXP nS, SEXP bS, SEXP itS, SEXP biS, SEXP prS, SEXP m
     Rcpp::Named("accept") = accept,                         // M-H acceptance
     Rcpp::Named("sum") = sum_save,                          // history of the sum of identical neighbours
     Rcpp::Named("z") = z,                                   // final sample from Gibbs distribution
-    Rcpp::Named("e") = e,                                   // finalò allocation vector
-    Rcpp::Named("ne") = ne                                  // final counts of like neighbours
+    Rcpp::Named("salso_hist") = salout                      // history of allocations salso compatible
   );
   
   if (adaptGFS) {
@@ -1240,8 +1243,8 @@ SEXP mcmcPotts1d(SEXP yS, SEXP nS, SEXP bS, SEXP itS, SEXP biS, SEXP prS, SEXP m
 //    init optional value used to initalize the beta to start from
 //    adaptive optional,if omitted the default is adaptive, if adaptive = NULL then the bandwidth is fixed
 //    target optional, used to dedtermine how fast to change the bandwidth int the adaptive case (don't change if it is not strictly necessary)
-
-SEXP mcmcPottsmd(SEXP yS, SEXP nS, SEXP bS, SEXP itS, SEXP biS, SEXP prS, SEXP mhS)
+//salitS number of allocactions to save in a salso compatible manner (matrix each row is a iteration)
+SEXP mcmcPottsmd(SEXP yS, SEXP nS, SEXP bS, SEXP itS, SEXP biS, SEXP prS, SEXP mhS, SEXP salitS)
 {
   BEGIN_RCPP
   //directly creating arma matrix from SEXP
@@ -1249,7 +1252,7 @@ SEXP mcmcPottsmd(SEXP yS, SEXP nS, SEXP bS, SEXP itS, SEXP biS, SEXP prS, SEXP m
   
   Rcpp::IntegerMatrix nR(nS);       // creates Rcpp matrix from SEXP
   Rcpp::List bR(bS), prR(prS), mhR(mhS);
-  unsigned niter = Rcpp::as<unsigned>(itS), nburn = Rcpp::as<unsigned>(biS);
+  unsigned niter = Rcpp::as<unsigned>(itS), nburn = Rcpp::as<unsigned>(biS), nsalso = Rcpp::as<unsigned>(salitS);
   
   // no easy conversion from IntegerVector to uvec
   arma::umat neigh = unsignMx(nR) - 1;
@@ -1342,7 +1345,10 @@ SEXP mcmcPottsmd(SEXP yS, SEXP nS, SEXP bS, SEXP itS, SEXP biS, SEXP prS, SEXP m
   arma::umat alloc = arma::zeros<arma::umat>(nR.nrow(), k); // number of allocations of each elem to each cluster 
   arma::rowvec nZ(k);                                       // number of element in each cluster
   arma::mat sumY(d,k);                                      // sum of the values in each cluster, used to compute the means per cluster
-  mdupdateStats(Y, z, nZ, sumY);                            // updating the data structures following the random initialization
+  arma::cube SSY = arma::zeros(d,d,k);                      // the matrix of sum (y-mu)(y-mu)^t for each cluster 
+  mdupdateStats(Y, z, mu, nZ, sumY, SSY);                   // updating the data structures following the random initialization
+  arma::mat salout = arma::zeros(nsalso,nvert);             // history of allocations salso compatible
+  arma::rowvec allocvec(nvert);
   unsigned accept = 0, acc_old = 0;
   
   Rcpp::Rcout << niter << " iterations discarding the first " << nburn << " as burn-in." << "\n";
@@ -1361,15 +1367,19 @@ SEXP mcmcPottsmd(SEXP yS, SEXP nS, SEXP bS, SEXP itS, SEXP biS, SEXP prS, SEXP m
     // update labels
     arma::mat alpha = dnorm_field(Y, mu, lambads);
     gibbsLabels(neigh, blocks, z, alloc, beta, alpha);
-    mdupdateStats(Y, z, nZ, sumY);
+    mdupdateStats(Y, z, mu, nZ, sumY, SSY);
     sum_save(it) = sum_ident(z, neigh, blocks);
+    if(it >= niter - nsalso){
+      salsovec(z,allocvec);
+      salout.row(it - niter + nsalso) = allocvec;
+    }
     
     // update means
     mu = mdgibbsMeans(nZ, sumY, pr_mu, pr_mu_sigma_inv, lambads);
     mu_save.slice(it) = mu;
     
     /// update standard deviations
-    lambads = gibbsLambda(nZ, Y, blocks, z, pr_sigma_v0, pr_sigma_n0, mu);
+    lambads = gibbsLambda(nZ, SSY, z, pr_sigma_v0, pr_sigma_n0);
     arma::cube temp_sigma(d,d,k);
     for( unsigned int i = 0; i < k; i++){
       temp_sigma.slice(i) = lambads.slice(i).i();
@@ -1392,10 +1402,6 @@ SEXP mcmcPottsmd(SEXP yS, SEXP nS, SEXP bS, SEXP itS, SEXP biS, SEXP prS, SEXP m
     beta_save[it] = beta;
   }
   
-  arma::uvec e(z.n_rows-1);
-  arma::mat ne = arma::zeros(z.n_cols, z.n_rows-1);
-  neighbj(ne, e, z, neigh);
-  
   Rcpp::List result = Rcpp::List::create(
     Rcpp::Named("alloc") = alloc,                           // count of allocations to each component
     Rcpp::Named("mu")    = mu_save,                         // history of simulated values of mu
@@ -1404,8 +1410,7 @@ SEXP mcmcPottsmd(SEXP yS, SEXP nS, SEXP bS, SEXP itS, SEXP biS, SEXP prS, SEXP m
     Rcpp::Named("accept") = accept,                         // M-H acceptance
     Rcpp::Named("sum") = sum_save,                          // history of the sum of identical neighbours
     Rcpp::Named("z") = z,                                   // final sample from Gibbs distribution
-    Rcpp::Named("e") = e,                                   // final allocation vector
-    Rcpp::Named("ne") = ne                                  // final counts of like neighbours
+    Rcpp::Named("salso_hist") = salout                      // history of allocations salso compatible
   );
   
   if (adaptGFS) {
@@ -1422,11 +1427,11 @@ SEXP mcmcPottsmd(SEXP yS, SEXP nS, SEXP bS, SEXP itS, SEXP biS, SEXP prS, SEXP m
 // wrapper function for the gibbs sampler for the potts model with beta approximatted by pseudolikelihood 
 // this identifies wheter we are in the 1d or md case and calls the appropriate function
 // [[Rcpp::export]]
-SEXP MCMCPotts(SEXP yS, SEXP nS, SEXP bS, SEXP itS, SEXP biS, SEXP prS, SEXP mhS) {
+SEXP MCMCPotts(SEXP yS, SEXP nS, SEXP bS, SEXP itS, SEXP biS, SEXP prS, SEXP mhS, SEXP salitS) {
   if(Rf_isMatrix(yS))
-    return mcmcPottsmd(yS, nS, bS, itS, biS, prS, mhS);
+    return mcmcPottsmd(yS, nS, bS, itS, biS, prS, mhS, salitS);
   else if(Rf_isVector(yS))
-    return mcmcPotts1d(yS, nS, bS, itS, biS, prS, mhS);
+    return mcmcPotts1d(yS, nS, bS, itS, biS, prS, mhS, salitS);
   else {
     Rcpp::Rcout << " the data must be either a vector or a matrix " << "\n";
     return Rcpp::List(); //return an empty list
