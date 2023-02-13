@@ -20,4 +20,4 @@
 2. Run the following code:
  ` library(devtools)`
  and 
- `install_github("alfedo-g-zapiola/multiPotts") `
+ `install_github("https://github.com/alfredo-g-zapiola/multiPotts") `
