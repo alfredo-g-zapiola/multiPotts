@@ -533,19 +533,20 @@ void salsovec(const arma::umat& z, arma::rowvec & allocvec)
 }
 
 
-// monodimensional gaussian mixture model gibbs sampler
-// inputs:
-// inputs:
-// yS a vector of data
-// itS total number of iterations
-// biS burn in iterations
-// prS is a list of priors for the model, it includes:
-//    mu: the prior mean of the normal distr of the mean of each cluster (vector)
-//    mu.sd: the prior sd of the normal distr of the mean of each cluster (vector)
-//    sigma: the shape parameter of the gamma for the sd prior (vector)
-//    sigma.nu: the rate parameters of the gamma for the sd prior (vector)
-//    lambda: the parameters of the dirichlet for the weights of the mixture (vector)
-//salitS number of allocactions to save in a salso compatible manner (matrix each row is a iteration)
+//' monodimensional gaussian mixture model gibbs sampler
+//' @description Yields the posterior of a 1D-GMM by building a Gibbs MCM algorithm
+//' @param yS a vector of data
+//' @param itS total number of iterations
+//' @param biS burn in iterations
+//' @param prS is a list of priors for the model, it includes:
+//' @param    mu: the prior mean of the normal distr of the mean of each cluster (vector)
+//' @param    mu.sd: the prior sd of the normal distr of the mean of each cluster (vector)
+//' @param    sigma: the shape parameter of the gamma for the sd prior (vector)
+//' @param    sigma.nu: the rate parameters of the gamma for the sd prior (vector)
+//' @param    lambda: the parameters of the dirichlet for the weights of the mixture (vector)
+//' @paramsalitS number of allocactions to save in a salso compatible manner (matrix each row is a iteration)
+//' @return List of the posterior of the Random Variables
+// [Rcpp::export]
 SEXP gibbsGMM1d(SEXP yS, SEXP prS, SEXP itS, SEXP biS,SEXP salitS) {
   BEGIN_RCPP
   unsigned niter = Rcpp::as<unsigned>(itS), nburn = Rcpp::as<unsigned>(biS), nsalso = Rcpp::as<unsigned>(salitS);
@@ -637,18 +638,20 @@ SEXP gibbsGMM1d(SEXP yS, SEXP prS, SEXP itS, SEXP biS,SEXP salitS) {
 }
 
 
-// multidimensional GMM gibbs sampler
-// inputs:
-// yS a matrix of data, samples on the cols, features on the rows
-// itS total number of iterations
-// biS burn in iterations
-// prS is a list of priors for the model, it includes:
-//    mu: the prior mean of the normal distr of the mean of each cluster (matrix)
-//    mu.sigma: the covariance matrices of the normal distr of the mean of each cluster (3D array)
-//    sigma.V0: the V= matrix for the wishart prior of the covariance matrices (3D array)
-//    sigma.n0: the n0 parameters of the wishart prior for the covariance matrices (vector)
-//    lambda: the parameters of the dirichlet for the weights of the mixture (vector)
-//salitS number of allocactions to save in a salso compatible manner (matrix each row is a iteration)
+//' multidimensional GMM gibbs sampler
+//' @description Yields the posterior of a 1D-GMM by building a Gibbs MCM algorithm
+//' @param yS a matrix of data, samples on the cols, features on the rows
+//' @param itS total number of iterations
+//' @param biS burn in iterations
+//' @param prS is a list of priors for the model, it includes:
+//' @param   mu: the prior mean of the normal distr of the mean of each cluster (matrix)
+//' @param    mu.sigma: the covariance matrices of the normal distr of the mean of each cluster (3D array)
+//' @param    sigma.V0: the V= matrix for the wishart prior of the covariance matrices (3D array)
+//' @param    sigma.n0: the n0 parameters of the wishart prior for the covariance matrices (vector)
+//' @param    lambda: the parameters of the dirichlet for the weights of the mixture (vector)
+//' @param salitS number of allocactions to save in a salso compatible manner (matrix each row is a iteration)
+//' 
+//' @return List of the posterior distribution of the random variables
 SEXP gibbsGMMmd(SEXP yS, SEXP prS, SEXP itS, SEXP biS, SEXP salitS) {
   BEGIN_RCPP
   unsigned niter = Rcpp::as<unsigned>(itS), nburn = Rcpp::as<unsigned>(biS), nsalso = Rcpp::as<unsigned>(salitS);
@@ -761,8 +764,18 @@ SEXP gibbsGMMmd(SEXP yS, SEXP prS, SEXP itS, SEXP biS, SEXP salitS) {
 }
 
 
-// wrapper function for the gibbs sampler for the GMM
-// this identifies wheter we are in the 1d or md case and calls the appropriate function
+//' wrapper function for the gibbs sampler for the GMM
+//' 
+//' @description this identifies whether we are in the 1D or mD case and calls the appropriate function
+//' @details the prior list prS must include: mu: the prior mean of the normal distr of the mean of each cluster (vector)   mu.sd: the prior sd of the normal distr of the mean of each cluster (vectorsigma the shape parameter of the gamma for the sd prior (vector)sigma.nu the rate parameters of the gamma for the sd prior (vector)
+//' itS total number of iterations
+//' @param ys the data vector (1D) or matrix (mD)
+//' @param prS is a list of priors for the model
+//' @param itS max number of iterations
+//' @param biS number of burn-in iterations
+//' @param salitS number of allocactions to save in a salso compatible manner (matrix each row is a iteration)
+//'
+//'@return List with the posterior samples of each random variable
 // [[Rcpp::export]]
 SEXP GibbsGMM(SEXP yS, SEXP prS, SEXP itS, SEXP biS, SEXP salitS) {
   if(Rf_isMatrix(yS))
@@ -1024,10 +1037,26 @@ SEXP gibbsPottsmd(SEXP yS, SEXP betaS, SEXP muS, SEXP sigmaS, SEXP nS, SEXP bS, 
 }
 
 
-// wrapper function for the gibbs sampler for the potts model with fixed beta
-// this identifies wheter we are in the 1d or md case and calls the appropriate function
+//' wrapper function for the gibbs sampler for the potts model with fixed beta
+//' @description this identifies whether we are in the 1d or md case and calls the appropriate function
+//' 
+//' @param yS a matrix (vector) of data, samples on the cols, features on the rows
+//' @param betaS is the value of beta to use for the gibbs Distribution
+//' @param muS is a matrix containing the starting point of the mu of the chain, one col for cluster
+//' @param sigmaS is a 3D array containing the starting values of the covariance matrices of the potts model, one per cluster
+//' @param nS is the neighbours object from BayesImageS
+//' @param bs is the blocks object from BayesImageS
+//' @param prS is a list of priors for the model, it includes:
+//' @param  mu: the prior mean of the normal distr of the mean of each cluster (matrix)
+//' @param    mu.sigma the covariance matrices of the normal distr of the mean of each cluster (3D array)
+//' @param  sigma.V0 the V= matrix for the wishart prior of the covariance matrices (3D array)
+//' @param sigma.n0 the n0 parameters of the wishart prior for the covariance matrices (vector)
+//' @param  itS total number of iterations
+//' @param biS burn in iterations
+//' @param salitS number of allocactions to save in a salso compatible manner (matrix each row is a iteration
+//'@return List with the posterior samples of each random variable
 // [[Rcpp::export]]
-SEXP GibbsPotts(SEXP yS, SEXP betaS, SEXP muS, SEXP sigmaS, SEXP nS, SEXP bS, SEXP prS, SEXP itS, SEXP biS, SEXP salitS) {
+SEXP GibbfPotts(SEXP yS, SEXP betaS, SEXP muS, SEXP sigmaS, SEXP nS, SEXP bS, SEXP prS, SEXP itS, SEXP biS, SEXP salitS) {
   if(Rf_isMatrix(yS))
     return gibbsPottsmd(yS, betaS, muS, sigmaS, nS, bS, prS, itS, biS, salitS);
   else if(Rf_isVector(yS))
@@ -1039,25 +1068,32 @@ SEXP GibbsPotts(SEXP yS, SEXP betaS, SEXP muS, SEXP sigmaS, SEXP nS, SEXP bS, SE
 }
 
 
-// monodimensional Potts model gibbs sampler with beta sampled via Pseudolikelihood
-// inputs:
-// yS a vector of data
-// nS is the neighbours object from BayesImageS
-// bS is the blocks object from BayesImageS
-// itS number of iterations to perform
-// biS number of burn in iterations
-// prS is a list of priors for the model, it includes:
-//    mu: the prior mean of the normal distr of the mean of each cluster (vector)
-//    mu.sd the prior sd of the normal distr of the mean of each cluster (vector)
-//    sigma the shape parameter of the gamma for the sd prior (vector)
-//    sigma.nu the rate parameters of the gamma for the sd prior (vector)
-//    beta constaining the borders of the interval where the beta is uniformly distributed (vector)
-// mhS is a list of options for the MH step when sampling beta,it includes:
-//    bandwith the standard deviation of the normal distr used for the rwmh when updating beta
-//    init optional value used to initalize the beta to start from
-//    adaptive optional,if omitted the default is adaptive, if adaptive = NULL then the bandwidth is fixed
-//    target optional, used to dedtermine how fast to change the bandwidth int the adaptive case (don't change if it is not strictly necessary)
-//salitS number of allocactions to save in a salso compatible manner (matrix each row is a iteration)
+//' monodimensional Potts model gibbs sampler with beta sampled via Pseudolikelihood
+//' @description Build a Gibbs MCMC to yield the posterior of the random variables of a Potts model with 
+//' random beta. 
+//' 
+//' @details This algorithm contains a metropolis-hastings step for the full conditional
+ //' of beta.
+//' 
+//' @param yS a vector of data
+//' @param nS is the neighbours object from BayesImageS
+//' @param bS is the blocks object from BayesImageS
+//' @param itS number of iterations to perform
+//' @param biS number of burn in iterations
+//' @param prS is a list of priors for the model, it includes:
+//' @param    mu: the prior mean of the normal distr of the mean of each cluster (vector)
+//' @param    mu.sd the prior sd of the normal distr of the mean of each cluster (vector)
+//' @param    sigma the shape parameter of the gamma for the sd prior (vector)
+//' @param    sigma.nu the rate parameters of the gamma for the sd prior (vector)
+//' @param    beta constaining the borders of the interval where the beta is uniformly distributed (vector)
+//' @param mhS is a list of options for the MH step when sampling beta,it includes:
+//' @param    bandwith the standard deviation of the normal distr used for the rwmh when updating beta
+//' @param    init optional value used to initalize the beta to start from
+//' @param    adaptive optional,if omitted the default is adaptive, if adaptive = NULL then the bandwidth is fixed
+//' @param    target optional, used to dedtermine how fast to change the bandwidth int the adaptive case (don't change if it is not strictly necessary)
+//' @param salitS number of allocactions to save in a salso compatible manner (matrix each row is a iteration)
+//'@return List with the posterior samples of each random variable
+// [[Rcpp::export]]
 SEXP mcmcPotts1d(SEXP yS, SEXP nS, SEXP bS, SEXP itS, SEXP biS, SEXP prS, SEXP mhS, SEXP salitS)
 {
   BEGIN_RCPP
@@ -1225,26 +1261,29 @@ SEXP mcmcPotts1d(SEXP yS, SEXP nS, SEXP bS, SEXP itS, SEXP biS, SEXP prS, SEXP m
 }
 
 
-// multidimensional Potts model gibbs sampler with beta sampled via Pseudolikelihood
-// inputs:
-// yS a matrix of data, samples on the cols, features on the rows
-// nS is the neighbours object from BayesImageS
-// bS is the blocks object from BayesImageS
-// itS number of iterations to perform
-// biS number of burn in iterations
-// prS is a list of priors for the model, it includes:
-//    mu: the prior mean of the normal distr of the mean of each cluster (matrix)
-//    mu.sigma the covariance matrices of the normal distr of the mean of each cluster (3D array)
-//    sigma.V0 the V= matrix for the wishart prior of the covariance matrices (3D array)
-//    sigma.n0 the n0 parameters of the wishart prior for the covariance matrices (vector)
-//    beta constaining the borders of the interval where the beta is uniformly distributed (vector)
-// mhS is a list of options for the MH step when sampling beta,it includes:
-//    bandwith the standard deviation of the normal distr used for the rwmh when updating beta
-//    init optional value used to initalize the beta to start from
-//    adaptive optional,if omitted the default is adaptive, if adaptive = NULL then the bandwidth is fixed
-//    target optional, used to dedtermine how fast to change the bandwidth int the adaptive case (don't change if it is not strictly necessary)
-//salitS number of allocactions to save in a salso compatible manner (matrix each row is a iteration)
-SEXP mcmcPottsmd(SEXP yS, SEXP nS, SEXP bS, SEXP itS, SEXP biS, SEXP prS, SEXP mhS, SEXP salitS)
+//' multidimensional Potts model gibbs sampler with beta sampled via Pseudolikelihood
+//'
+//' @param yS a matrix of data, samples on the cols, features on the rows
+//' @param nS is the neighbours object from BayesImageS
+//' @param  bS is the blocks object from BayesImageS
+//' @param itS number of iterations to perform
+//' @param biS number of burn in iterations
+//' @param prS is a list of priors for the model, it includes:
+//' @param    mu: the prior mean of the normal distr of the mean of each cluster (matrix)
+//' @param   mu.sigma the covariance matrices of the normal distr of the mean of each cluster (3D array)
+//' @param   sigma.V0 the V= matrix for the wishart prior of the covariance matrices (3D array)
+//' @param    sigma.n0 the n0 parameters of the wishart prior for the covariance matrices (vector)
+//' @param    beta constaining the borders of the interval where the beta is uniformly distributed (vector)
+//' @param  mhS is a list of options for the MH step when sampling beta
+//' @param salitS number of allocactions to save in a salso compatible manner (matrix each row is a iteration)
+//' @details mhS it includes:
+//'    bandwith the standard deviation of the normal distr used for the rwmh when updating beta
+//'    init optional value used to initalize the beta to start from
+//'    adaptive optional,if omitted the default is adaptive, if adaptive = NULL then the bandwidth is fixed
+//'    target optional, used to dedtermine how fast to change the bandwidth int the adaptive case (don't change if it is not strictly necessary)
+//' @return a List with the samples of theposterior of the random variables
+// [[Rcpp::export]]
+ SEXP mcmcPottsmd(SEXP yS, SEXP nS, SEXP bS, SEXP itS, SEXP biS, SEXP prS, SEXP mhS, SEXP salitS)
 {
   BEGIN_RCPP
   //directly creating arma matrix from SEXP
@@ -1424,9 +1463,28 @@ SEXP mcmcPottsmd(SEXP yS, SEXP nS, SEXP bS, SEXP itS, SEXP biS, SEXP prS, SEXP m
 }
 
 
-// wrapper function for the gibbs sampler for the potts model with beta approximatted by pseudolikelihood 
-// this identifies wheter we are in the 1d or md case and calls the appropriate function
-// [[Rcpp::export]]
+//' wrapper function for the gibbs sampler for the potts model with beta approximatted by pseudolikelihood 
+//' @description this identifies wheter we are in the 1d or md case and calls the appropriate function
+//' @param yS a matrix of data, samples on the cols, features on the rows
+//' @param nS is the neighbours object from BayesImageS
+//' @param  bS is the blocks object from BayesImageS
+//' @param itS number of iterations to perform
+//' @param biS number of burn in iterations
+//' @param prS is a list of priors for the model, it includes:
+//' @param    mu: the prior mean of the normal distr of the mean of each cluster (matrix)
+//' @param   mu.sigma the covariance matrices of the normal distr of the mean of each cluster (3D array)
+//' @param   sigma.V0 the V= matrix for the wishart prior of the covariance matrices (3D array)
+//' @param    sigma.n0 the n0 parameters of the wishart prior for the covariance matrices (vector)
+//' @param    beta constaining the borders of the interval where the beta is uniformly distributed (vector)
+//' @param  mhS is a list of options for the MH step when sampling beta
+//' @param salitS number of allocactions to save in a salso compatible manner (matrix each row is a iteration)
+//' @details mhS it includes:
+//'    bandwith the standard deviation of the normal distr used for the rwmh when updating beta
+//'    init optional value used to initalize the beta to start from
+//'    adaptive optional,if omitted the default is adaptive, if adaptive = NULL then the bandwidth is fixed
+//'    target optional, used to dedtermine how fast to change the bandwidth int the adaptive case (don't change if it is not strictly necessary)
+//' @return a List with the samples of theposterior of the random variables
+ // [[Rcpp::export]]
 SEXP MCMCPotts(SEXP yS, SEXP nS, SEXP bS, SEXP itS, SEXP biS, SEXP prS, SEXP mhS, SEXP salitS) {
   if(Rf_isMatrix(yS))
     return mcmcPottsmd(yS, nS, bS, itS, biS, prS, mhS, salitS);

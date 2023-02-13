@@ -9,7 +9,7 @@ Description: A library that fits the potts model utilising a mixture of multivar
 License: GPL (>= 2)
 Suggests: tinytest
 Encoding: UTF-8
-RoxygenNote: 7.1.2
+RoxygenNote: 7.2.3
 Imports: Rcpp (>= 1.0.9)
 LinkingTo: Rcpp, RcppArmadillo, RcppProgress
 RequiresCompilation: Yes

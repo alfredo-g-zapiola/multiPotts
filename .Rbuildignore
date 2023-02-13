@@ -1,4 +1,4 @@
-^.*\Cpp_code
+^.*\Application_mice_brains_images
 ^.git$
 ^.*\.Rproj$
 ^\.Rproj\.user$
