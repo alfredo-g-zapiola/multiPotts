@@ -1,0 +1,402 @@
+---
+title: "rectangular_mask"
+output: html_document
+date: "2022-12-04"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(rayshader)
+library(patchwork)
+library(ggplot2)
+library(plot.matrix)
+library(bayesImageS)
+library(coda)
+
+
+D = read.table("C:/Users/simo9/Desktop/bayes proj/Glicani/85 variabili-20221203T074516Z-001/85 variabili/101_glicani-PreProcessed-IM-Step1-Step2-Step4-Step5-101.txt")
+D0 = D
+D0[is.na(D0)] = 0
+
+pixels = read.table("C:/Users/simo9/Desktop/bayes proj/Glicani/85 variabili-20221203T074516Z-001/85 variabili/101_glicani-PreProcessed-XYCoordinates-Step1-Step2-Step4-Step5-101.txt")
+colnames(D0) = substr(colnames(D0),1,5)
+colnames(pixels) = c("x","y")
+
+Data_long = as_tibble(data.frame( pixels, D0 ))
+max_number_of_pixels = apply(Data_long[,1:2],2,max)
+
+
+
+Data_very_long = reshape2::melt(Data_long,c("x","y")) %>% mutate(pixel_ind = paste0(x,"_",y), value_ind = rep(1:nrow(Data_long),ncol(D0)))
+
+detach("package:dplyr", unload = TRUE)
+library(dplyr)
+
+Data_very_long = Data_very_long %>% group_by(pixel_ind) %>% mutate(n = row_number()) %>% ungroup() %>% mutate(mz = as.numeric(substr(variable,2,4)))
+
+
+#FPCA
+
+library(fda)
+# first method 
+mz_values<-as.numeric(substr(Data_very_long$variable,2,7))
+mz_values<-unique(mz_values)
+basis <- create.bspline.basis(rangeval=c(min(mz_values),max(mz_values)),breaks=mz_values, norder = 2)
+D1<-as.matrix(D0)
+D1<-t(D1)
+data_W.fd.1 <- Data2fd(argvals = mz_values,y = D1,basisobj = basis)
+
+pca_W.1 <- pca.fd(data_W.fd.1,nharm=5,centerfns=TRUE)
+
+# clearly 2 gaussians would be enough
+
+#lets keep the fpca results
+pcascore1 = pca_W.1$scores[,1]
+
+mask <-matrix(0,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  mask[pixels[i,1],pixels[i,2]] = 1
+}
+
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(mask, border=NA,asp = TRUE)
+
+```
+## K = 2 with Betacritic constraint
+
+```{r}
+q <- 2
+betacritic = log(1 + sqrt(q))
+neigh <- getNeighbors(mask = mask, c(2,2,0,0))
+block <- getBlocks(mask = mask, 2)
+
+priors <- list()
+priors$k <- q
+priors$mu <- c(-30,20)
+priors$mu.sd <- rep(5,q)
+priors$sigma <- rep(2,q)
+priors$sigma.nu <- rep(0.5,q)
+priors$beta <- c(0,betacritic)
+
+mh <- list(algorithm="pseudolikelihood", bandwidth=1)
+```
+
+```{r include=FALSE}
+res <- mcmcPotts(pcascore1, neigh, block, priors, mh, 10000, 5000)
+```
+
+```{r}
+
+muchain = mcmc(res$mu)
+varnames(muchain)<-c("mu_1","mu_2")
+sigmachain = mcmc(res$sigma)
+varnames(sigmachain)<-c("sigma_1","sigma_2")
+betachain = mcmc(res$beta)
+varnames(betachain)<-c("beta")
+sumchain  = mcmc(res$sum)
+varnames(sumchain)<-c("sum")
+
+summary(muchain)
+
+batchSE(muchain)
+
+effectiveSize(muchain)
+
+rejectionRate(muchain)
+
+plot(muchain)
+par(mfrow=c(1,3))
+autocorr.plot(muchain,auto.layout=FALSE)
+
+crosscorr.plot(muchain)
+
+summary(sigmachain)
+
+batchSE(sigmachain)
+
+effectiveSize(sigmachain)
+
+plot(sigmachain)
+
+par(mfrow=c(1,3))
+autocorr.plot(sigmachain,auto.layout=FALSE)
+
+summary(sumchain)
+
+batchSE(sumchain)
+
+effectiveSize(sumchain)
+
+plot(sumchain)
+
+autocorr.plot(sumchain)
+
+summary(betachain)
+
+batchSE(betachain)
+
+effectiveSize(betachain)
+plot(betachain)
+autocorr.plot(betachain)
+
+clustering <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clustering[pixels[i,1],pixels[i,2]] = res$e[i]
+}
+
+par(mfrow = c(1,1))
+plot(clustering, border=NA,asp = TRUE,col = rainbow)
+```
+
+## K = 2 without Betacritic constraint
+
+
+```{r}
+priors2 <- list()
+priors2$k <- q
+priors2$mu <- c(-30,20)
+priors2$mu.sd <- rep(5,q)
+priors2$sigma <- rep(2,q)
+priors2$sigma.nu <- rep(0.5,q)
+priors2$beta <- c(0,2*betacritic)
+
+mh2 <- list(algorithm="pseudolikelihood", bandwidth=1)
+```
+
+```{r include=FALSE}
+res2 <- mcmcPotts(pcascore1, neigh, block, priors2, mh2, 10000, 5000)
+```
+
+```{r}
+clustering2 <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clustering2[pixels[i,1],pixels[i,2]] = res2$e[i]
+}
+
+
+muchain2 = mcmc(res2$mu)
+varnames(muchain2)<-c("mu_1","mu_2")
+sigmachain2 = mcmc(res2$sigma)
+varnames(sigmachain2)<-c("sigma_1","sigma_2")
+betachain2 = mcmc(res2$beta)
+varnames(betachain2)<-c("beta")
+sumchain2  = mcmc(res2$sum)
+varnames(sumchain2)<-c("sum")
+
+
+summary(muchain2)
+batchSE(muchain2)
+effectiveSize(muchain2)
+rejectionRate(muchain2)
+# still need to understand this since i am using adaptive mh alg
+
+plot(muchain2)
+
+par(mfrow=c(1,3))
+autocorr.plot(muchain2,auto.layout=FALSE)
+
+crosscorr.plot(muchain2)
+
+summary(sigmachain2)
+batchSE(sigmachain2)
+effectiveSize(sigmachain2)
+
+plot(sigmachain2)
+
+par(mfrow=c(1,3))
+autocorr.plot(sigmachain2,auto.layout=FALSE)
+
+
+summary(sumchain2)
+batchSE(sumchain2)
+effectiveSize(sumchain2)
+
+plot(sumchain2)
+
+autocorr.plot(sumchain2)
+
+summary(betachain2)
+batchSE(betachain2)
+effectiveSize(betachain2)
+
+plot(betachain2)
+
+autocorr.plot(betachain2)
+
+print(table(clustering2))
+
+par(mfrow = c(1,1))
+plot(clustering2, border=NA,asp = TRUE,col = rainbow)
+```
+
+## K = 5 with Betacritic constraint
+
+```{r}
+q <- 5
+betacritic = log(1 + sqrt(q))
+neigh <- getNeighbors(mask = mask, c(2,2,0,0))
+block <- getBlocks(mask = mask, 2)
+
+priors <- list()
+priors$k <- q
+priors$mu <- c(-30,20,0,0,0)
+priors$mu.sd <- rep(8,q)
+priors$sigma <- rep(3,q)
+priors$sigma.nu <- rep(0.5,q)
+priors$beta <- c(0,betacritic)
+
+mh <- list(algorithm="pseudolikelihood", bandwidth=1)
+```
+
+```{r include=FALSE}
+res <- mcmcPotts(pcascore1, neigh, block, priors, mh, 10000, 5000)
+```
+
+```{r}
+
+muchain = mcmc(res$mu)
+varnames(muchain)<-c("mu_1","mu_2", "mu_3", "mu_4", "mu_5")
+sigmachain = mcmc(res$sigma)
+varnames(sigmachain)<-c("sigma_1","sigma_2", "sigma_3", "sigma_4", "sigma_5")
+betachain = mcmc(res$beta)
+varnames(betachain)<-c("beta")
+sumchain  = mcmc(res$sum)
+varnames(sumchain)<-c("sum")
+
+summary(muchain)
+
+batchSE(muchain)
+
+effectiveSize(muchain)
+
+rejectionRate(muchain)
+
+plot(muchain)
+par(mfrow=c(1,3))
+autocorr.plot(muchain,auto.layout=FALSE)
+
+crosscorr.plot(muchain)
+
+summary(sigmachain)
+
+batchSE(sigmachain)
+
+effectiveSize(sigmachain)
+
+plot(sigmachain)
+
+par(mfrow=c(1,3))
+autocorr.plot(sigmachain,auto.layout=FALSE)
+
+summary(sumchain)
+
+batchSE(sumchain)
+
+effectiveSize(sumchain)
+
+plot(sumchain)
+
+autocorr.plot(sumchain)
+
+summary(betachain)
+
+batchSE(betachain)
+
+effectiveSize(betachain)
+plot(betachain)
+autocorr.plot(betachain)
+
+clustering <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clustering[pixels[i,1],pixels[i,2]] = res$e[i]
+}
+
+par(mfrow = c(1,1))
+plot(clustering, border=NA,asp = TRUE,col = rainbow)
+
+```
+
+## K = 5 without Betacritic constraint
+```{r}
+# removing the constraint on beta critic
+priors2 <- list()
+priors2$k <- q
+priors2$mu <- c(-30,20,0,0,0)
+priors2$mu.sd <- rep(8,q)
+priors2$sigma <- rep(3,q)
+priors2$sigma.nu <- rep(0.5,q)
+priors2$beta <- c(0,2*betacritic)
+
+mh2 <- list(algorithm="pseudolikelihood", bandwidth=1)
+```
+
+```{r include=FALSE}
+res2 <- mcmcPotts(pcascore1, neigh, block, priors2, mh2, 10000, 5000)
+```
+
+```{r}
+clustering2 <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clustering2[pixels[i,1],pixels[i,2]] = res2$e[i]
+}
+
+
+muchain2 = mcmc(res2$mu)
+varnames(muchain2)<-c("mu_1","mu_2", "mu_3", "mu_4", "mu_5")
+sigmachain2 = mcmc(res2$sigma)
+varnames(sigmachain2)<-c("sigma_1","sigma_2", "sigma_3", "sigma_4", "sigma_5")
+betachain2 = mcmc(res2$beta)
+varnames(betachain2)<-c("beta")
+sumchain2  = mcmc(res2$sum)
+varnames(sumchain2)<-c("sum")
+
+
+summary(muchain2)
+batchSE(muchain2)
+effectiveSize(muchain2)
+rejectionRate(muchain2)
+# still need to understand this since i am using adaptive mh alg
+
+plot(muchain2)
+
+par(mfrow=c(1,3))
+autocorr.plot(muchain2,auto.layout=FALSE)
+
+crosscorr.plot(muchain2)
+
+summary(sigmachain2)
+batchSE(sigmachain2)
+effectiveSize(sigmachain2)
+
+plot(sigmachain2)
+
+par(mfrow=c(1,3))
+autocorr.plot(sigmachain2,auto.layout=FALSE)
+
+
+summary(sumchain2)
+batchSE(sumchain2)
+effectiveSize(sumchain2)
+
+plot(sumchain2)
+
+autocorr.plot(sumchain2)
+
+summary(betachain2)
+batchSE(betachain2)
+effectiveSize(betachain2)
+
+plot(betachain2)
+
+autocorr.plot(betachain2)
+
+print(table(clustering2))
+
+par(mfrow = c(1,1))
+plot(clustering2, border=NA,asp = TRUE,col = rainbow)
+
+```

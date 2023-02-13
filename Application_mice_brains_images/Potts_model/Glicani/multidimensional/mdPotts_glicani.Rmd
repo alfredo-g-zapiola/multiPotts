@@ -1,0 +1,707 @@
+---
+title: "multidimensional potts model Glicani"
+author: Simone Colombara, Alessia Cotroneo, Francesco De Caro, Riccardo Morandi, Chiara   Schembri,
+  Alfredo Zapiola
+date: "2022-12-18"
+output:   
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(rayshader)
+library(patchwork)
+library(viridis)
+library(plot.matrix)
+library(bayesImageS)
+library(stats)
+library(Rcpp)
+library(RcppArmadillo)
+library(coda)
+library(MASS)
+```
+
+```{r, warning=FALSE}
+sourceCpp("/Users/macbookpro/Documents/Bayesian Statistics/Project/Cpp_code/GibbsSampler_updated.cpp")
+sourceCpp("/Users/macbookpro/Documents/Bayesian Statistics/Project/Cpp_code/mcmcPotts.cpp")
+```
+
+##loading data
+
+```{r}
+G = read.table("/Users/macbookpro/Documents/Bayesian Statistics/Project/Raw_data/Glicani/85 variabili/101_glicani-PreProcessed-IM-Step1-Step2-Step4-Step5-101.txt")
+G0 = G
+G0[is.na(G0)] = 0
+pixels = read.table("/Users/macbookpro/Documents/Bayesian Statistics/Project/Raw_data/Glicani/85 variabili/101_glicani-PreProcessed-XYCoordinates-Step1-Step2-Step4-Step5-101.txt")
+colnames(G0) = substr(colnames(G0),1,4)
+colnames(pixels) = c("x","y")
+max_number_of_pixels = c(157,178)
+```
+
+## convenional pca on data
+
+```{r}
+pca = princomp(G0)
+plot(pca)
+summary(pca)
+```
+
+ we can get 96% of the explained variance with the first 4 components
+
+```{r}
+pcascore1vec = pca$scores[,1]
+pcascore2vec = pca$scores[,2]
+pcascore3vec = pca$scores[,3]
+pcascore4vec = pca$scores[,4]
+data = rbind(pcascore1vec,pcascore2vec,pcascore3vec,pcascore4vec)
+data2 = rbind(pcascore1vec,pcascore2vec)
+```
+
+### single component plots
+
+```{r}
+comp1 <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+comp2 <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+comp3 <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+comp4 <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  comp1[pixels[i,1],pixels[i,2]] = pcascore1vec[i]
+  comp2[pixels[i,1],pixels[i,2]] = pcascore2vec[i]
+  comp3[pixels[i,1],pixels[i,2]] = pcascore3vec[i]
+  comp4[pixels[i,1],pixels[i,2]] = pcascore4vec[i]
+}
+par(mfrow=c(2,2))
+plot(comp1, border=NA,asp = TRUE,col= turbo,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+plot(comp2, border=NA,asp = TRUE,col= turbo,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+plot(comp3, border=NA,asp = TRUE,col= turbo,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+plot(comp4, border=NA,asp = TRUE,col= turbo,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```
+
+```{r}
+mask <-matrix(0,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  mask[pixels[i,1],pixels[i,2]] = 1
+}
+
+neigh <- getNeighbors(mask = mask, c(2,2,0,0))
+block <- getBlocks(mask = mask, 2)
+```
+
+# d = 2
+
+## K = 3
+
+we start with non informative priors for the parameters
+
+```{r}
+k = 3
+betacritic = log(1 + sqrt(k))
+d = 2
+B0 = diag(100,d,d)
+V0 = diag(10,d,d)
+n0 = 10
+initmu = matrix(0,d,k)
+initsigma = array(n0*V0,dim = c(d,d,k))
+
+priors <- list()
+priors$k <- k
+priors$mu <- matrix(0,d,k)
+priors$mu.sigma <- array(B0,dim = c(d,d,k))
+priors$sigma.V0 <- array(V0,dim = c(d,d,k))
+priors$sigma.n0 <- rep(n0,k)
+
+```
+
+```{r}
+iter = 10000
+burnin = 5000
+results <- GibbsPotts(data2,betacritic,initmu,initsigma,neigh,block,priors,iter,burnin)
+```
+
+```{r}
+clustering <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clustering[pixels[i,1],pixels[i,2]] = which.max(results$alloc[i,])
+}
+print(table(clustering))
+```
+
+```{r}
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(clustering, border=NA,asp = TRUE,col= turbo(k),axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```
+
+```{r}
+plot(pcascore1vec,pcascore2vec,col = clustering[pixels[,1],pixels[,2]])
+```
+
+```{r}
+mu1chain = mcmc(t(results$mu[,1,]))
+mu2chain = mcmc(t(results$mu[,2,]))
+mu3chain = mcmc(t(results$mu[,3,]))
+```
+
+```{r}
+par(mfrow = c(d,d))
+plot(mu1chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(mu1chain,auto.layout = FALSE)
+plot(mu2chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(mu2chain,auto.layout = FALSE)
+plot(mu3chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(mu3chain,auto.layout = FALSE)
+```
+
+```{r}
+trace1 = rep(0,iter)
+trace2 = rep(0,iter)
+trace3 = rep(0,iter)
+
+for( i in 1:iter){
+  trace1[i] = sum(diag(results$sigmas[i][[1]][,,1]))
+  trace2[i] = sum(diag(results$sigmas[i][[1]][,,2]))
+  trace3[i] = sum(diag(results$sigmas[i][[1]][,,3]))
+}
+
+tr1chain = mcmc(trace1)
+tr2chain = mcmc(trace2)
+tr3chain = mcmc(trace3)
+
+par(mfrow = c(3,2))
+plot(tr1chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(tr1chain,auto.layout = FALSE)
+plot(tr2chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(tr2chain,auto.layout = FALSE)
+plot(tr3chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(tr3chain,auto.layout = FALSE)
+```
+
+
+
+## K = 6
+
+we start with non informative priors for the parameters
+
+```{r}
+k = 6
+betacritic = log(1 + sqrt(k))
+d = 2
+B0 = diag(100,d,d)
+V0 = diag(10,d,d)
+n0 = 10
+initmu = matrix(0,d,k)
+initsigma = array(n0*V0,dim = c(d,d,k))
+
+priors <- list()
+priors$k <- k
+priors$mu <- matrix(0,d,k)
+priors$mu.sigma <- array(B0,dim = c(d,d,k))
+priors$sigma.V0 <- array(V0,dim = c(d,d,k))
+priors$sigma.n0 <- rep(n0,k)
+```
+
+```{r}
+iter = 10000
+burnin = 5000
+results <- GibbsPotts(data2,betacritic,initmu,initsigma,neigh,block,priors,iter,burnin)
+```
+
+```{r}
+clustering <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clustering[pixels[i,1],pixels[i,2]] = which.max(results$alloc[i,])
+}
+print(table(clustering))
+```
+
+```{r}
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(clustering, border=NA,asp = TRUE,col= turbo(k),axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```
+
+```{r}
+plot(pcascore1vec,pcascore2vec,col = clustering[pixels[,1],pixels[,2]])
+```
+
+```{r}
+mu1chain = mcmc(t(results$mu[,1,]))
+mu2chain = mcmc(t(results$mu[,2,]))
+mu3chain = mcmc(t(results$mu[,3,]))
+mu4chain = mcmc(t(results$mu[,4,]))
+mu5chain = mcmc(t(results$mu[,5,]))
+mu6chain = mcmc(t(results$mu[,6,]))
+```
+
+
+```{r}
+par(mfrow = c(d,d))
+plot(mu1chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(mu1chain,auto.layout = FALSE)
+plot(mu2chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(mu2chain,auto.layout = FALSE)
+plot(mu3chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(mu3chain,auto.layout = FALSE)
+plot(mu4chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(mu4chain,auto.layout = FALSE)
+plot(mu5chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(mu5chain,auto.layout = FALSE)
+plot(mu6chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(mu6chain,auto.layout = FALSE)
+```
+
+```{r}
+trace1 = rep(0,iter)
+trace2 = rep(0,iter)
+trace3 = rep(0,iter)
+trace4 = rep(0,iter)
+trace5 = rep(0,iter)
+trace6 = rep(0,iter)
+
+for( i in 1:iter){
+  trace1[i] = sum(diag(results$sigmas[i][[1]][,,1]))
+  trace2[i] = sum(diag(results$sigmas[i][[1]][,,2]))
+  trace3[i] = sum(diag(results$sigmas[i][[1]][,,3]))
+  trace4[i] = sum(diag(results$sigmas[i][[1]][,,4]))
+  trace5[i] = sum(diag(results$sigmas[i][[1]][,,5]))
+  trace6[i] = sum(diag(results$sigmas[i][[1]][,,6]))
+}
+
+tr1chain = mcmc(trace1)
+tr2chain = mcmc(trace2)
+tr3chain = mcmc(trace3)
+tr4chain = mcmc(trace4)
+tr5chain = mcmc(trace5)
+tr6chain = mcmc(trace6)
+
+par(mfrow = c(2,2))
+plot(tr1chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(tr1chain,auto.layout = FALSE)
+plot(tr2chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(tr2chain,auto.layout = FALSE)
+plot(tr3chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(tr3chain,auto.layout = FALSE)
+plot(tr4chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(tr4chain,auto.layout = FALSE)
+plot(tr5chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(tr5chain,auto.layout = FALSE)
+plot(tr6chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(tr6chain,auto.layout = FALSE)
+```
+
+# d = 4
+
+## K = 3
+
+we start with non informative priors for the parameters
+
+```{r}
+k = 3
+betacritic = log(1 + sqrt(k))
+d = 4
+B0 = diag(100,d,d)
+V0 = diag(10,d,d)
+n0 = 10
+initmu = matrix(0,d,k)
+initsigma = array(n0*V0,dim = c(d,d,k))
+
+priors <- list()
+priors$k <- k
+priors$mu <- matrix(0,d,k)
+priors$mu.sigma <- array(B0,dim = c(d,d,k))
+priors$sigma.V0 <- array(V0,dim = c(d,d,k))
+priors$sigma.n0 <- rep(n0,k)
+
+```
+
+```{r}
+iter = 10000
+burnin = 5000
+results <- GibbsPotts(data,betacritic,initmu,initsigma,neigh,block,priors,iter,burnin)
+```
+
+```{r}
+clustering <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clustering[pixels[i,1],pixels[i,2]] = which.max(results$alloc[i,])
+}
+print(table(clustering))
+```
+
+```{r}
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(clustering, border=NA,asp = TRUE,col= turbo(k),axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```
+
+```{r}
+plot(pcascore1vec,pcascore2vec,col = clustering[pixels[,1],pixels[,2]])
+```
+
+```{r}
+mu1chain = mcmc(t(results$mu[,1,]))
+mu2chain = mcmc(t(results$mu[,2,]))
+mu3chain = mcmc(t(results$mu[,3,]))
+```
+
+```{r}
+par(mfrow = c(2,2))
+plot(mu1chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(mu1chain,auto.layout = FALSE)
+plot(mu2chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(mu2chain,auto.layout = FALSE)
+plot(mu3chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(mu3chain,auto.layout = FALSE)
+```
+
+```{r}
+trace1 = rep(0,iter)
+trace2 = rep(0,iter)
+trace3 = rep(0,iter)
+
+for( i in 1:iter){
+  trace1[i] = sum(diag(results$sigmas[i][[1]][,,1]))
+  trace2[i] = sum(diag(results$sigmas[i][[1]][,,2]))
+  trace3[i] = sum(diag(results$sigmas[i][[1]][,,3]))
+}
+
+tr1chain = mcmc(trace1)
+tr2chain = mcmc(trace2)
+tr3chain = mcmc(trace3)
+
+par(mfrow = c(3,2))
+plot(tr1chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(tr1chain,auto.layout = FALSE)
+plot(tr2chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(tr2chain,auto.layout = FALSE)
+plot(tr3chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(tr3chain,auto.layout = FALSE)
+```
+
+## K = 6
+
+we start with non informative priors for the parameters
+
+```{r}
+k = 6
+betacritic = log(1 + sqrt(k))
+d = 4
+B0 = diag(100,d,d)
+V0 = diag(10,d,d)
+n0 = 10
+initmu = matrix(0,d,k)
+initsigma = array(n0*V0,dim = c(d,d,k))
+
+priors <- list()
+priors$k <- k
+priors$mu <- matrix(0,d,k)
+priors$mu.sigma <- array(B0,dim = c(d,d,k))
+priors$sigma.V0 <- array(V0,dim = c(d,d,k))
+priors$sigma.n0 <- rep(n0,k)
+```
+
+```{r}
+iter = 10000
+burnin = 5000
+results <- GibbsPotts(data,betacritic,initmu,initsigma,neigh,block,priors,iter,burnin)
+```
+
+```{r}
+clustering <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clustering[pixels[i,1],pixels[i,2]] = which.max(results$alloc[i,])
+}
+print(table(clustering))
+```
+
+```{r}
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(clustering, border=NA,asp = TRUE,col= turbo(k),axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```
+
+```{r}
+plot(pcascore1vec,pcascore2vec,col = clustering[pixels[,1],pixels[,2]])
+```
+
+```{r}
+mu1chain = mcmc(t(results$mu[,1,]))
+mu2chain = mcmc(t(results$mu[,2,]))
+mu3chain = mcmc(t(results$mu[,3,]))
+mu4chain = mcmc(t(results$mu[,4,]))
+mu5chain = mcmc(t(results$mu[,5,]))
+mu6chain = mcmc(t(results$mu[,6,]))
+```
+
+
+```{r}
+par(mfrow = c(3,2))
+plot(mu1chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(mu1chain,auto.layout = FALSE)
+plot(mu2chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(mu2chain,auto.layout = FALSE)
+plot(mu3chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(mu3chain,auto.layout = FALSE)
+plot(mu4chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(mu4chain,auto.layout = FALSE)
+plot(mu5chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(mu5chain,auto.layout = FALSE)
+plot(mu6chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(mu6chain,auto.layout = FALSE)
+```
+
+```{r}
+trace1 = rep(0,iter)
+trace2 = rep(0,iter)
+trace3 = rep(0,iter)
+trace4 = rep(0,iter)
+trace5 = rep(0,iter)
+trace6 = rep(0,iter)
+
+for( i in 1:iter){
+  trace1[i] = sum(diag(results$sigmas[i][[1]][,,1]))
+  trace2[i] = sum(diag(results$sigmas[i][[1]][,,2]))
+  trace3[i] = sum(diag(results$sigmas[i][[1]][,,3]))
+  trace4[i] = sum(diag(results$sigmas[i][[1]][,,4]))
+  trace5[i] = sum(diag(results$sigmas[i][[1]][,,5]))
+  trace6[i] = sum(diag(results$sigmas[i][[1]][,,6]))
+}
+
+tr1chain = mcmc(trace1)
+tr2chain = mcmc(trace2)
+tr3chain = mcmc(trace3)
+tr4chain = mcmc(trace4)
+tr5chain = mcmc(trace5)
+tr6chain = mcmc(trace6)
+
+par(mfrow = c(2,2))
+plot(tr1chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(tr1chain,auto.layout = FALSE)
+plot(tr2chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(tr2chain,auto.layout = FALSE)
+plot(tr3chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(tr3chain,auto.layout = FALSE)
+plot(tr4chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(tr4chain,auto.layout = FALSE)
+plot(tr5chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(tr5chain,auto.layout = FALSE)
+plot(tr6chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(tr6chain,auto.layout = FALSE)
+```
+
+# bata approximated via pseudolikelihood
+
+## K = 3
+
+we start with non informative priors for the parameters
+
+```{r}
+k = 3
+betacritic = log(1 + sqrt(k))
+d = 4
+B0 = diag(100,d,d)
+V0 = diag(10,d,d)
+n0 = 10
+initmu = matrix(0,d,k)
+initsigma = array(n0*V0,dim = c(d,d,k))
+
+priors <- list()
+priors$k <- k
+priors$mu <- matrix(0,d,k)
+priors$mu.sigma <- array(B0,dim = c(d,d,k))
+priors$sigma.V0 <- array(V0,dim = c(d,d,k))
+priors$sigma.n0 <- rep(n0,k)
+priors$beta <- c(0,2*betacritic)
+
+mh <- list(bandwidth=0.1)
+```
+
+```{r}
+iter = 10000
+burnin = 5000
+results <- MCMCPotts(data,neigh,block,iter,burnin,priors,mh)
+```
+
+```{r}
+clustering <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clustering[pixels[i,1],pixels[i,2]] = which.max(results$alloc[i,])
+}
+print(table(clustering))
+```
+
+```{r}
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(clustering, border=NA,asp = TRUE,col= turbo(k),axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```
+
+```{r}
+plot(pcascore1vec,pcascore2vec,col = clustering[pixels[,1],pixels[,2]])
+```
+
+```{r}
+mu1chain = mcmc(t(results$mu[,1,]))
+mu2chain = mcmc(t(results$mu[,2,]))
+mu3chain = mcmc(t(results$mu[,3,]))
+```
+
+```{r}
+par(mfrow = c(2,2))
+plot(mu1chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(mu1chain,auto.layout = FALSE)
+plot(mu2chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(mu2chain,auto.layout = FALSE)
+plot(mu3chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(mu3chain,auto.layout = FALSE)
+```
+
+```{r}
+trace1 = rep(0,iter)
+trace2 = rep(0,iter)
+trace3 = rep(0,iter)
+
+for( i in 1:iter){
+  trace1[i] = sum(diag(results$sigma[i][[1]][,,1]))
+  trace2[i] = sum(diag(results$sigma[i][[1]][,,2]))
+  trace3[i] = sum(diag(results$sigma[i][[1]][,,3]))
+}
+
+tr1chain = mcmc(trace1)
+tr2chain = mcmc(trace2)
+tr3chain = mcmc(trace3)
+
+par(mfrow = c(3,2))
+plot(tr1chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(tr1chain,auto.layout = FALSE)
+plot(tr2chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(tr2chain,auto.layout = FALSE)
+plot(tr3chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(tr3chain,auto.layout = FALSE)
+```
+
+```{r}
+betachain = mcmc(results$beta)
+plot(betachain)
+autocorr.plot(betachain)
+```
+we dont have the problem of the beta critic
+
+## K = 6
+
+we start with non informative priors for the parameters
+
+```{r}
+k = 6
+betacritic = log(1 + sqrt(k))
+d = 4
+B0 = diag(100,d,d)
+V0 = diag(10,d,d)
+n0 = 10
+initmu = matrix(0,d,k)
+initsigma = array(n0*V0,dim = c(d,d,k))
+
+priors <- list()
+priors$k <- k
+priors$mu <- matrix(0,d,k)
+priors$mu.sigma <- array(B0,dim = c(d,d,k))
+priors$sigma.V0 <- array(V0,dim = c(d,d,k))
+priors$sigma.n0 <- rep(n0,k)
+priors$beta <- c(0,2*betacritic)
+
+mh <- list(bandwidth=0.1)
+```
+
+
+```{r}
+iter = 10000
+burnin = 5000
+results <- MCMCPotts(data,neigh,block,iter,burnin,priors,mh)
+```
+
+```{r}
+clustering <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clustering[pixels[i,1],pixels[i,2]] = which.max(results$alloc[i,])
+}
+print(table(clustering))
+```
+
+```{r}
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(clustering, border=NA,asp = TRUE,col= turbo(k),axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```
+
+```{r}
+plot(pcascore1vec,pcascore2vec,col = clustering[pixels[,1],pixels[,2]])
+```
+
+```{r}
+mu1chain = mcmc(t(results$mu[,1,]))
+mu2chain = mcmc(t(results$mu[,2,]))
+mu3chain = mcmc(t(results$mu[,3,]))
+mu4chain = mcmc(t(results$mu[,4,]))
+mu5chain = mcmc(t(results$mu[,5,]))
+mu6chain = mcmc(t(results$mu[,6,]))
+```
+
+
+```{r}
+par(mfrow = c(2,2))
+plot(mu1chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(mu1chain,auto.layout = FALSE)
+plot(mu2chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(mu2chain,auto.layout = FALSE)
+plot(mu3chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(mu3chain,auto.layout = FALSE)
+plot(mu4chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(mu4chain,auto.layout = FALSE)
+plot(mu5chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(mu5chain,auto.layout = FALSE)
+plot(mu6chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(mu6chain,auto.layout = FALSE)
+```
+
+```{r}
+trace1 = rep(0,iter)
+trace2 = rep(0,iter)
+trace3 = rep(0,iter)
+trace4 = rep(0,iter)
+trace5 = rep(0,iter)
+trace6 = rep(0,iter)
+
+for( i in 1:iter){
+  trace1[i] = sum(diag(results$sigma[i][[1]][,,1]))
+  trace2[i] = sum(diag(results$sigma[i][[1]][,,2]))
+  trace3[i] = sum(diag(results$sigma[i][[1]][,,3]))
+  trace4[i] = sum(diag(results$sigma[i][[1]][,,4]))
+  trace5[i] = sum(diag(results$sigma[i][[1]][,,5]))
+  trace6[i] = sum(diag(results$sigma[i][[1]][,,6]))
+}
+
+tr1chain = mcmc(trace1)
+tr2chain = mcmc(trace2)
+tr3chain = mcmc(trace3)
+tr4chain = mcmc(trace4)
+tr5chain = mcmc(trace5)
+tr6chain = mcmc(trace6)
+
+par(mfrow = c(2,2))
+plot(tr1chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(tr1chain,auto.layout = FALSE)
+plot(tr2chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(tr2chain,auto.layout = FALSE)
+plot(tr3chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(tr3chain,auto.layout = FALSE)
+plot(tr4chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(tr4chain,auto.layout = FALSE)
+plot(tr5chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(tr5chain,auto.layout = FALSE)
+plot(tr6chain,density = FALSE,auto.layout = FALSE)
+autocorr.plot(tr6chain,auto.layout = FALSE)
+```
+
+```{r}
+betachain = mcmc(results$beta)
+plot(betachain)
+autocorr.plot(betachain)
+```
+same again no problem with the beta

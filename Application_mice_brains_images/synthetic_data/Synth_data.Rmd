@@ -1,0 +1,222 @@
+---
+title: "Investigating the effect of beta using syntethic data"
+author: Simone Colombara, Alessia Cotroneo, Francesco De Caro, Riccardo Morandi, Chiara
+  Schembri, Alfredo Zapiola
+date: "2022-11-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(plot.matrix)
+library(bayesImageS)
+library(viridis)
+
+```
+
+
+
+```{r}
+D = read.table("/Users/macbook/Documents/Bayesian Statistics/Project/Raw_data/LIPIDI/78 variabili/101_lipidi-PreProcessed-IM-Step1-Step2-Step4-Step5-101.txt")
+D0 = D
+D0[is.na(D0)] = 0
+
+pixels = read.table("/Users/macbook/Documents/Bayesian Statistics/Project/Raw_data/LIPIDI/78 variabili/101_lipidi-PreProcessed-XYCoordinates-Step1-Step2-Step4-Step5-101.txt")
+colnames(D0) = substr(colnames(D0),1,4)
+colnames(pixels) = c("x","y")
+
+Data_long = as_tibble(data.frame( pixels, D0 ))
+max_number_of_pixels = apply(Data_long[,1:2],2,max)
+```
+
+# full matrix
+
+we first decide to generate synthetic data using the Swendsen & Wang algorithm, starting with a full matrix
+
+```{r}
+full_mask <-matrix(1,max_number_of_pixels[1],max_number_of_pixels[2])
+
+full_neigh <- getNeighbors(mask = full_mask, c(2,2,0,0))
+full_blocks <- getBlocks(mask = full_mask, 2)
+
+```
+
+## beta critic 
+
+```{r}
+k = 3
+betacritic = log(1 + sqrt(k))
+
+sw_res <- swNoData(1.0, k, full_neigh, full_blocks, niter = 1000, random = TRUE)
+
+sinth_clust <- matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:max_number_of_pixels[1]){
+  for(j in 1:max_number_of_pixels[2]){
+  sinth_clust[i,j] = which.max(sw_res$z[(i-1)*max_number_of_pixels[2]+j,])
+  }
+}
+
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(sinth_clust, border=NA,asp = TRUE,col = viridis,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+
+```
+
+```{r}
+par(mfrow = c(2,2))
+for( h in seq(from=0.8,to = 1.2,length.out = 12)){
+  sw_res <- swNoData(h, k, full_neigh, full_blocks, niter = 1000, random = TRUE)
+
+sinth_clust <- matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:max_number_of_pixels[1]){
+  for(j in 1:max_number_of_pixels[2]){
+  sinth_clust[i,j] = which.max(sw_res$z[(i-1)*max_number_of_pixels[2]+j,])
+  }
+}
+
+
+plot(sinth_clust, border=NA,asp = TRUE,col = viridis,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL,main=paste0("beta = ",h))
+
+}
+
+```
+we can simulate data also using an mcmc algorithm rather than sw and we get bigger bands for the dame value of beta
+
+```{r}
+res.gibbs <- mcmcPottsNoData(betacritic, k, full_neigh , full_blocks, niter = 1000, random = TRUE)
+
+sinth_clust <- matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:max_number_of_pixels[1]){
+  for(j in 1:max_number_of_pixels[2]){
+  sinth_clust[i,j] = which.max(res.gibbs$alloc[(i-1)*max_number_of_pixels[2]+j,])
+  }
+}
+
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(sinth_clust, border=NA,asp = TRUE,col = viridis,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL,main=paste0("beta = ",betacritic))
+
+```
+*simulating with gibbs sampling introduces more stripes to our model*
+
+# Investigating the role of mask shape on the output
+
+we want to understand the role of the dimensions, we start by using a ssquare grid
+
+```{r}
+square_mask <-matrix(1,max_number_of_pixels[1],max_number_of_pixels[1])
+
+square_neigh <- getNeighbors(mask = square_mask, c(2,2,0,0))
+square_blocks <- getBlocks(mask = square_mask, 2)
+
+```
+
+```{r}
+square_res <- swNoData(1.0, k, square_neigh, square_blocks, niter = 1000, random = TRUE)
+
+square_clust <- matrix(NA,max_number_of_pixels[1],max_number_of_pixels[1])
+for(i in 1:max_number_of_pixels[1]){
+  for(j in 1:max_number_of_pixels[1]){
+  square_clust[i,j] = which.max(square_res$z[(i-1)*max_number_of_pixels[1]+j,])
+  }
+}
+
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(square_clust, border=NA,asp = TRUE,col = viridis,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+
+```
+
+this plays a major role in the shape of the clusters that we get
+doing the same on the mcmcversion
+
+```{r}
+square.gibbs <- mcmcPottsNoData(betacritic, k, square_neigh , square_blocks, niter = 1000, random = TRUE)
+
+square_clust <- matrix(NA,max_number_of_pixels[1],max_number_of_pixels[1])
+for(i in 1:max_number_of_pixels[1]){
+  for(j in 1:max_number_of_pixels[1]){
+  square_clust[i,j] = which.max(square.gibbs$alloc[(i-1)*max_number_of_pixels[1]+j,])
+  }
+}
+
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(square_clust, border=NA,asp = TRUE,col = viridis,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL,main=paste0("beta = ",betacritic))
+
+
+```
+
+this looks promising but we see that using the bibbs sampler tends to uniform the clusters, resulting in less noise but bigger cluster size, which in some cases we may want
+
+```{r}
+
+par(mfrow = c(2,3))
+for( h in seq(from=0.85,to = 1.1,length.out = 6)){
+  square_res <- swNoData(h, k, square_neigh, square_blocks, niter = 1000, random = TRUE)
+
+  suarq_clust <- matrix(NA,max_number_of_pixels[1],max_number_of_pixels[1])
+  for(i in 1:max_number_of_pixels[1]){
+    for(j in 1:max_number_of_pixels[1]){
+    square_clust[i,j] = which.max(square_res$z[(i-1)*max_number_of_pixels[1]+j,])
+    }
+  }
+
+  plot(square_clust, border=NA,asp = TRUE,col = viridis,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL,main=paste0("beta = ",h))
+}
+
+```
+
+doing the same on our geometry we expect the stripes as for the rectangular case, but let's check
+
+```{r}
+mask <-matrix(0,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  mask[pixels[i,1],pixels[i,2]] = 1
+}
+
+neigh <- getNeighbors(mask = mask, c(2,2,0,0))
+blocks <- getBlocks(mask = mask, 2)
+```
+
+```{r}
+sw_res <- swNoData(1.0, k, neigh, blocks, niter = 1000, random = TRUE)
+
+sinth_clust <- matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  sinth_clust[pixels[i,1],pixels[i,2]] = which.max(sw_res$z[i,])
+}
+
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(sinth_clust, border=NA,asp = TRUE,col = viridis,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+
+```
+
+
+```{r}
+par(mfrow = c(2,3))
+for( h in seq(from=0.85,to = 1.1,length.out = 6)){
+  sw_res <- swNoData(h, k, neigh, blocks, niter = 1000, random = TRUE)
+
+  sw_clust <- matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+  for(i in 1:dim(pixels)[1]){
+    sw_clust[pixels[i,1],pixels[i,2]] = which.max(sw_res$z[i,])
+  }
+
+  plot(sw_clust, border=NA,asp = TRUE,col = viridis,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL,main=paste0("beta = ",h))
+}
+```
+
+```{r}
+par(mfrow = c(2,3))
+for( h in seq(from=0.85,to = 1.1,length.out = 6)){
+  sw_res.gibbs <- mcmcPottsNoData(h, k, neigh , blocks, niter = 1000, random = TRUE)
+
+  sw_clust <- matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+  for(i in 1:dim(pixels)[1]){
+    sw_clust[pixels[i,1],pixels[i,2]] = which.max(sw_res.gibbs$z[i,])
+  }
+
+  plot(sw_clust, border=NA,asp = TRUE,col = viridis,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL,main=paste0("beta = ",h))
+}
+```
+
+the value of the beta critic seems to hold also for this geometry for these algorithm, I dont know it is theoretically true but if we bound it it wont cause us problems with the algorithms
+

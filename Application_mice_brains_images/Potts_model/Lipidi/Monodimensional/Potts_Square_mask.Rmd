@@ -1,0 +1,597 @@
+---
+title: "Poots No Mask square grid"
+author: Simone Colombara, Alessia Cotroneo, Francesco De Caro, Riccardo Morandi, Chiara
+  Schembri, Alfredo Zapiola
+date: "2022-11-12"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(plot.matrix)
+library(bayesImageS)
+library(coda)
+library(viridis)
+```
+
+```{r}
+D = read.table("/Users/macbookpro/Documents/Bayesian Statistics/Project/Raw_data/LIPIDI/78 variabili/101_lipidi-PreProcessed-IM-Step1-Step2-Step4-Step5-101.txt")
+D0 = D
+D0[is.na(D0)] = 0
+
+pixels = read.table("/Users/macbookpro/Documents/Bayesian Statistics/Project/Raw_data/LIPIDI/78 variabili/101_lipidi-PreProcessed-XYCoordinates-Step1-Step2-Step4-Step5-101.txt")
+colnames(D0) = substr(colnames(D0),1,4)
+colnames(pixels) = c("x","y")
+
+Data_long = as_tibble(data.frame( pixels, D0 ))
+max_number_of_pixels = apply(Data_long[,1:2],2,max)
+
+pca = princomp(D0)
+pcascore1 <-as.vector(pca$scores[,1])
+
+sum(is.na(pcascore1))
+```
+
+```{r}
+square_mask <-matrix(1,max_number_of_pixels[2],max_number_of_pixels[2])
+mask <-matrix(0,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  mask[pixels[i,1],pixels[i,2]] = 1
+}
+
+mask_idx = 1
+pca_aux <-rep(100,max_number_of_pixels[2]*max_number_of_pixels[2])
+
+for(i in 1:max_number_of_pixels[1]){
+  for(j in 1:max_number_of_pixels[2]){
+    if(mask[i,j]==1){
+      pca_aux[10*178+(i-1)*max_number_of_pixels[2]+j] = pcascore1[mask_idx]
+      mask_idx = mask_idx+1
+    }
+  }
+}
+
+check <-matrix(NA,max_number_of_pixels[2],max_number_of_pixels[2])
+mask_idx = 1;
+for(i in 1:max_number_of_pixels[2]){
+  for(j in 1:max_number_of_pixels[2]){
+    check[i,j] = pca_aux[mask_idx]
+    mask_idx = mask_idx+1
+  }
+}
+
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(check, border=NA,asp = TRUE,col = viridis,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```
+
+# K = 3
+
+```{r}
+q <- 4
+betacritic = log(1 + sqrt(q))
+neigh <- getNeighbors(mask = square_mask, c(2,2,0,0))
+block <- getBlocks(mask = square_mask, 2)
+
+priors <- list()
+priors$k <- q
+priors$mu <- c(-15,0,15,100)
+priors$mu.sd <- c(rep(30,q-1),0.1)
+priors$sigma <- c(rep(2,q-1),0.5)
+priors$sigma.nu <- c(rep(0.125,q-1),1)
+priors$beta <- c(0,betacritic)
+
+mh <- list(algorithm="pseudolikelihood", bandwidth=1)
+```
+
+
+```{r, results='hide'}
+res <- mcmcPotts(pca_aux, neigh, block, priors, mh, 10000, 5000)
+```
+
+## chain analysis 
+
+```{r}
+muchain = mcmc(res$mu)
+varnames(muchain)<-c("mu_1","mu_2","mu_3","mu_b")
+sigmachain = mcmc(res$sigma)
+varnames(sigmachain)<-c("sigma_1","sigma_2","sigma_3","sigma_b")
+betachain = mcmc(res$beta)
+varnames(betachain)<-c("beta")
+sumchain  = mcmc(res$sum)
+varnames(sumchain)<-c("sum")
+```
+
+### mu
+
+```{r}
+
+summary(muchain)
+batchSE(muchain)
+effectiveSize(muchain)
+rejectionRate(muchain)
+# still need to understand this since i am using adaptive mh alg
+par(mfrow=c(2,2))
+plot(muchain,auto.layout = FALSE)
+
+par(mfrow=c(2,2))
+autocorr.plot(muchain,auto.layout=FALSE)
+
+```
+
+### sigma 
+
+```{r}
+
+summary(sigmachain)
+batchSE(sigmachain)
+effectiveSize(sigmachain)
+par(mfrow=c(2,2))
+plot(sigmachain,auto.layout=FALSE)
+autocorr.plot(sigmachain,auto.layout=FALSE)
+```
+
+### sum
+
+```{r}
+summary(sumchain)
+effectiveSize(sumchain)
+plot(sumchain)
+autocorr.plot(sumchain)
+```
+
+up to here the chain does not present mixing problems (this is probably due to the adaptiveness of the algorithm that prevents it) 
+other than high autocorrelation that can be fixed by thinning the chain
+
+### beta
+
+```{r}
+summary(betachain)
+effectiveSize(betachain)
+plot(betachain)
+autocorr.plot(betachain)
+```
+
+this seems to want to go up but I fixed the threshold to beta critic to avoid the beta from exploding and giving all uniform parameters
+
+## plot
+
+
+```{r}
+clustering <-matrix(NA,max_number_of_pixels[2],max_number_of_pixels[2])
+for(i in 1:max_number_of_pixels[2]){
+  for(j in 1:max_number_of_pixels[2]){
+      clustering[i,j] = res$e[(i-1)*max_number_of_pixels[2]+j]
+  }
+}
+
+print(table(clustering))
+```
+
+
+```{r}
+par(mar=c(4.1, 4.1, 4.1, 4.1))
+plot(clustering, border=NA,asp = TRUE,col =viridis,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```
+
+# removing the constraint on beta
+
+```{r}
+q <- 4
+betacritic = log(1 + sqrt(q))
+neigh <- getNeighbors(mask = square_mask, c(2,2,0,0))
+block <- getBlocks(mask = square_mask, 2)
+
+priors <- list()
+priors$k <- q
+priors$mu <- c(-15,0,15,100)
+priors$mu.sd <- c(rep(30,q-1),0.1)
+priors$sigma <- rep(2,q)
+priors$sigma.nu <- rep(0.125,q)
+priors$beta <- c(0,5*betacritic)
+
+mh <- list(algorithm="pseudolikelihood", bandwidth=1)
+```
+
+
+```{r, results='hide'}
+res2 <- mcmcPotts(pca_aux, neigh, block, priors, mh, 10000, 5000)
+```
+
+## chain analysis 
+
+```{r}
+muchain = mcmc(res2$mu)
+varnames(muchain)<-c("mu_1","mu_2","mu_3","mu_b")
+sigmachain = mcmc(res2$sigma)
+varnames(sigmachain)<-c("sigma_1","sigma_2","sigma_3","sigma_b")
+betachain = mcmc(res2$beta)
+varnames(betachain)<-c("beta")
+sumchain  = mcmc(res2$sum)
+varnames(sumchain)<-c("sum")
+```
+
+### mu
+
+```{r}
+
+summary(muchain)
+batchSE(muchain)
+effectiveSize(muchain)
+rejectionRate(muchain)
+# still need to understand this since i am using adaptive mh alg
+par(mfrow=c(2,2))
+plot(muchain,auto.layout = FALSE)
+
+par(mfrow=c(2,2))
+autocorr.plot(muchain,auto.layout=FALSE)
+
+```
+
+### sigma 
+
+```{r}
+
+summary(sigmachain)
+batchSE(sigmachain)
+effectiveSize(sigmachain)
+par(mfrow=c(2,2))
+plot(sigmachain,auto.layout=FALSE)
+autocorr.plot(sigmachain,auto.layout=FALSE)
+```
+
+### sum
+
+```{r}
+summary(sumchain)
+effectiveSize(sumchain)
+plot(sumchain)
+autocorr.plot(sumchain)
+```
+
+
+### beta
+
+```{r}
+summary(betachain)
+effectiveSize(betachain)
+plot(betachain)
+autocorr.plot(betachain)
+```
+
+
+## plot
+
+```{r}
+clustering2 <-matrix(NA,max_number_of_pixels[2],max_number_of_pixels[2])
+for(i in 1:max_number_of_pixels[2]){
+  for(j in 1:max_number_of_pixels[2]){
+      clustering2[i,j] = res2$e[(i-1)*max_number_of_pixels[2]+j]
+  }
+}
+print(table(clustering2))
+```
+
+```{r}
+par(mar=c(4.1, 4.1, 4.1, 4.1))
+plot(clustering2, border=NA,asp = TRUE,col =viridis,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```
+
+
+# K = 6
+
+```{r, results='hide'}
+q <- 7
+betacritic6 = log(1 + sqrt(q))
+
+priors6 <- list()
+priors6$k <- q
+priors6$mu <- c(-23,-15,-7,0,7,15,100)
+priors6$mu.sd <- c(rep(30,q-1),0.01)
+priors6$sigma <- c(rep(2,q-1), 0.1)
+priors6$sigma.nu <- c(rep(0.125,q-1),1)
+priors6$beta <- c(0,betacritic6)
+
+mh6 <- list(algorithm="pseudolikelihood", bandwidth=1)
+
+res6 <- mcmcPotts(pca_aux, neigh, block, priors6, mh6, 10000, 5000)
+
+clustering6 <-matrix(NA,max_number_of_pixels[2],max_number_of_pixels[2])
+for(i in 1:max_number_of_pixels[2]){
+  for(j in 1:max_number_of_pixels[2]){
+      clustering6[i,j] = res6$e[(i-1)*max_number_of_pixels[2]+j]
+  }
+}
+
+```
+
+## chain analysis
+
+```{r}
+muchain6 = mcmc(res6$mu)
+varnames(muchain6)<-c("mu_1","mu_2","mu_3","mu_4","mu_5","mu_6","mu_b")
+sigmachain6 = mcmc(res6$sigma)
+varnames(sigmachain6)<-c("sigma_1","sigma_2","sigma_3","sigma_4","sigma_5","sigma_6","sigma_b")
+betachain6 = mcmc(res6$beta)
+varnames(betachain6)<-c("beta")
+sumchain6  = mcmc(res6$sum)
+varnames(sumchain6)<-c("sum")
+
+```
+
+### mu 
+
+```{r}
+summary(muchain6)
+batchSE(muchain6)
+effectiveSize(muchain6)
+rejectionRate(muchain6)
+
+par(mfrow=c(2,2))
+plot(muchain6,auto.layout = FALSE)
+
+par(mfrow=c(2,2))
+autocorr.plot(muchain6,auto.layout=FALSE)
+
+```
+
+### sigma
+
+```{r}
+summary(sigmachain6)
+batchSE(sigmachain6)
+effectiveSize(sigmachain6)
+par(mfrow=c(2,2))
+plot(sigmachain6,auto.layout=FALSE)
+
+autocorr.plot(sigmachain6,auto.layout=FALSE)
+```
+
+### sum
+
+```{r}
+summary(sumchain6)
+
+plot(sumchain6)
+autocorr.plot(sumchain6)
+```
+
+### beta
+
+```{r}
+summary(betachain6)
+
+plot(betachain6)
+
+autocorr.plot(betachain6)
+```
+
+
+## plot
+
+```{r}
+print(table(clustering6))
+```
+
+```{r}
+par(mar=c(4.1, 4.1, 4.1, 4.1))
+plot(clustering6, border=NA,asp = TRUE,col=viridis(q),axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```
+we start having problems with the background class even at beta critic, i tried to reduce the standard deviation of the background class using a low scale parameter and it worked
+
+# removing the constraint on beta
+
+```{r, results='hide'}
+q <- 7
+betacritic6 = log(1 + sqrt(q))
+
+priors6 <- list()
+priors6$k <- q
+priors6$mu <- c(-23,-15,-7,0,7,15,100)
+priors6$mu.sd <- c(rep(30,q-1),0.01)
+priors6$sigma <- c(rep(2,q-1),0.1)
+priors6$sigma.nu <- c(rep(0.125,q-1),1)
+priors6$beta <- c(0,5*betacritic6)
+
+mh6 <- list(algorithm="pseudolikelihood", bandwidth=1)
+
+res6 <- mcmcPotts(pca_aux, neigh, block, priors6, mh6, 10000, 5000)
+
+clustering6b <-matrix(NA,max_number_of_pixels[2],max_number_of_pixels[2])
+for(i in 1:max_number_of_pixels[2]){
+  for(j in 1:max_number_of_pixels[2]){
+      clustering6b[i,j] = res6$e[(i-1)*max_number_of_pixels[2]+j]
+  }
+}
+
+```
+
+## chain analysis
+
+```{r}
+muchain6 = mcmc(res6$mu)
+varnames(muchain6)<-c("mu_1","mu_2","mu_3","mu_4","mu_5","mu_6","mu_b")
+sigmachain6 = mcmc(res6$sigma)
+varnames(sigmachain6)<-c("sigma_1","sigma_2","sigma_3","sigma_4","sigma_5","sigma_6","sigma_b")
+betachain6 = mcmc(res6$beta)
+varnames(betachain6)<-c("beta")
+sumchain6  = mcmc(res6$sum)
+varnames(sumchain6)<-c("sum")
+
+```
+
+### mu 
+
+```{r}
+summary(muchain6)
+batchSE(muchain6)
+effectiveSize(muchain6)
+rejectionRate(muchain6)
+
+par(mfrow=c(2,2))
+plot(muchain6,auto.layout = FALSE)
+
+par(mfrow=c(2,2))
+autocorr.plot(muchain6,auto.layout=FALSE)
+
+```
+
+### sigma
+
+```{r}
+summary(sigmachain6)
+batchSE(sigmachain6)
+effectiveSize(sigmachain6)
+par(mfrow=c(2,2))
+plot(sigmachain6,auto.layout=FALSE)
+
+autocorr.plot(sigmachain6,auto.layout=FALSE)
+```
+
+### sum
+
+```{r}
+summary(sumchain6)
+
+plot(sumchain6)
+autocorr.plot(sumchain6)
+```
+
+### beta
+
+```{r}
+summary(betachain6)
+
+plot(betachain6)
+
+autocorr.plot(betachain6)
+```
+
+
+## plot
+
+```{r}
+print(table(clustering6b))
+```
+
+```{r}
+par(mar=c(4.1, 4.1, 4.1, 4.1))
+plot(clustering6b, border=NA,asp = TRUE,col=turbo(q),axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```
+
+# refining the priors
+
+since we have a lot of groups we try o reduce the prior variance in he hope of better distinguishing different groups
+
+```{r, results='hide'}
+q <- 7
+betacritic6 = log(1 + sqrt(q))
+
+priors6 <- list()
+priors6$k <- q
+priors6$mu <- c(-23,-15,-7,0,7,15,100)
+priors6$mu.sd <- c(rep(10,q-1),0.01)
+priors6$sigma <- c(rep(2,q-1),0.1)
+priors6$sigma.nu <- c(rep(0.5,q-1),1)
+priors6$beta <- c(0,5*betacritic6)
+
+mh6 <- list(algorithm="pseudolikelihood", bandwidth=1)
+
+res6 <- mcmcPotts(pca_aux, neigh, block, priors6, mh6, 10000, 5000)
+
+clustering6c <-matrix(NA,max_number_of_pixels[2],max_number_of_pixels[2])
+for(i in 1:max_number_of_pixels[2]){
+  for(j in 1:max_number_of_pixels[2]){
+      clustering6c[i,j] = res6$e[(i-1)*max_number_of_pixels[2]+j]
+  }
+}
+
+```
+
+## chain analysis
+
+```{r}
+muchain6 = mcmc(res6$mu)
+varnames(muchain6)<-c("mu_1","mu_2","mu_3","mu_4","mu_5","mu_6","mu_b")
+sigmachain6 = mcmc(res6$sigma)
+varnames(sigmachain6)<-c("sigma_1","sigma_2","sigma_3","sigma_4","sigma_5","sigma_6","sigma_b")
+betachain6 = mcmc(res6$beta)
+varnames(betachain6)<-c("beta")
+sumchain6  = mcmc(res6$sum)
+varnames(sumchain6)<-c("sum")
+
+```
+
+### mu 
+
+```{r}
+summary(muchain6)
+batchSE(muchain6)
+effectiveSize(muchain6)
+rejectionRate(muchain6)
+
+par(mfrow=c(2,2))
+plot(muchain6,auto.layout = FALSE)
+
+par(mfrow=c(2,2))
+autocorr.plot(muchain6,auto.layout=FALSE)
+
+```
+
+### sigma
+
+```{r}
+summary(sigmachain6)
+batchSE(sigmachain6)
+effectiveSize(sigmachain6)
+par(mfrow=c(2,2))
+plot(sigmachain6,auto.layout=FALSE)
+
+autocorr.plot(sigmachain6,auto.layout=FALSE)
+```
+
+### sum
+
+```{r}
+summary(sumchain6)
+
+plot(sumchain6)
+autocorr.plot(sumchain6)
+```
+
+### beta
+
+```{r}
+summary(betachain6)
+
+plot(betachain6)
+
+autocorr.plot(betachain6)
+```
+
+## plot
+
+```{r}
+print(table(clustering6c))
+```
+
+```{r}
+par(mar=c(4.1, 4.1, 4.1, 4.1))
+plot(clustering6c, border=NA,asp = TRUE,col=turbo(q),axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```
+
+
+# Final Plot
+
+```{r}
+par(mfrow=c(2,2))
+plot(clustering, border=NA,asp = TRUE,col =viridis(4),axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL,main = "K = 3 & betacritic")
+plot(clustering2, border=NA,asp = TRUE,col =plasma(4),axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL,main = "K = 3")
+plot(clustering6, border=NA,asp = TRUE,col =magma(7),axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL,main = "K = 6 & betacritic")
+plot(clustering6c, border=NA,asp = TRUE,col=turbo(7),axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL,main = "K = 6")
+```
+
+

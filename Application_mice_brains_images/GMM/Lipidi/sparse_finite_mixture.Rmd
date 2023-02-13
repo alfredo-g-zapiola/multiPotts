@@ -1,0 +1,301 @@
+---
+title: "Sparse Finite Mixtures"
+author: Simone Colombara, Alessia Cotroneo, Francesco De Caro, Riccardo Morandi, Chiara
+  Schembri, Alfredo Zapiola
+date: "2022-11-04"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(plot.matrix)
+library(bayesImageS)
+library(stats)
+library(viridis)
+```
+
+```{r}
+D = read.table("/Users/macbookpro/Documents/Bayesian Statistics/Project/Raw_data/LIPIDI/78 variabili/101_lipidi-PreProcessed-IM-Step1-Step2-Step4-Step5-101.txt")
+D0 = D
+D0[is.na(D0)] = 0
+
+pixels = read.table("/Users/macbookpro/Documents/Bayesian Statistics/Project/Raw_data/LIPIDI/78 variabili/101_lipidi-PreProcessed-XYCoordinates-Step1-Step2-Step4-Step5-101.txt")
+colnames(D0) = substr(colnames(D0),1,4)
+colnames(pixels) = c("x","y")
+Data_long = as_tibble(data.frame( pixels, D0 ))
+max_number_of_pixels = apply(Data_long[,1:2],2,max)
+```
+
+## CONVENTOIONAL PCA ON VECTOR DATA TO BE UPDATED ONCE WE FIX FPCA
+
+```{r}
+pca = princomp(D0)
+```
+
+auxiliary vector of principal components
+
+```{r}
+pcascore1vec = pca$scores[,1]
+```
+
+```{r}
+par(mfrow=c(1,2))
+hist(pcascore1vec,main = "first pc score",breaks = 100)
+plot(density(pcascore1vec),main = "kernel density first pc score")
+```
+
+
+
+# all prior means are set to zero
+
+## k = 6
+
+the idea is to use a large k and small alpha in order to assign more weights to the edges of the symplex trying to induce sparsity
+
+```{r}
+q <- 5
+
+priorsSGMM5 <- list()
+priorsSGMM5$k <- q
+priorsSGMM5$lambda <- rep(0.01,q)
+priorsSGMM5$mu <- rep(0,q)
+priorsSGMM5$mu.sd <- rep(100,q)
+priorsSGMM5$sigma <- rep(2,q)
+priorsSGMM5$sigma.nu <- rep(1.5,q)
+
+resSGMM5 <- gibbsGMM(pcascore1vec, niter = 1000, nburn = 500, priors = priorsSGMM5)
+
+clusteringSGMM5 <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clusteringSGMM5[pixels[i,1],pixels[i,2]] = which.max(resSGMM5$alloc[i,])
+}
+
+print(table(clusteringSGMM5))
+```
+
+```{r}
+
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(clusteringSGMM5, border=NA,asp = TRUE,col =topo.colors(q),axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```
+
+
+## k = 10
+
+the idea is to use a large k and small alpha in order to assign more weights to the edges of the symplex trying to induce sparsity 
+
+```{r}
+q <- 10
+
+priorsSGMM10 <- list()
+priorsSGMM10$k <- q
+priorsSGMM10$lambda <- rep(0.01,q)
+priorsSGMM10$mu <- rep(0,q)
+priorsSGMM10$mu.sd <- rep(100,q)
+priorsSGMM10$sigma <- rep(2,q)
+priorsSGMM10$sigma.nu <- rep(1.5,q)
+
+resSGMM10 <- gibbsGMM(pcascore1vec, niter = 1000, nburn = 500, priors = priorsSGMM10)
+
+clusteringSGMM10 <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clusteringSGMM10[pixels[i,1],pixels[i,2]] = which.max(resSGMM10$alloc[i,])
+}
+
+print(table(clusteringSGMM10))
+```
+
+```{r}
+
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(clusteringSGMM10, border=NA,asp = TRUE,col= topo.colors(q),axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```
+
+
+
+## k = 15
+
+```{r}
+q <- 15
+
+priorsSGMM15 <- list()
+priorsSGMM15$k <- q
+priorsSGMM15$lambda <- rep(0.01,q)
+priorsSGMM15$mu <- rep(0,q)
+priorsSGMM15$mu.sd <- rep(100,q)
+priorsSGMM15$sigma <- rep(2,q)
+priorsSGMM15$sigma.nu <- rep(1.5,q)
+
+resSGMM15 <- gibbsGMM(pcascore1vec, niter = 1000, nburn = 500, priors = priorsSGMM15)
+
+clusteringSGMM15 <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clusteringSGMM15[pixels[i,1],pixels[i,2]] = which.max(resSGMM15$alloc[i,])
+}
+
+print(table(clusteringSGMM15))
+```
+
+```{r}
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(clusteringSGMM15, border=NA,asp = TRUE,col =topo.colors(q),axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```
+
+
+
+## k = 20
+
+```{r}
+q <- 20
+
+priorsSGMM20 <- list()
+priorsSGMM20$k <- q
+priorsSGMM20$lambda <- rep(0.001,q)
+priorsSGMM20$mu <- rep(0,q)
+priorsSGMM20$mu.sd <- rep(100,q)
+priorsSGMM20$sigma <- rep(2,q)
+priorsSGMM20$sigma.nu <- rep(1.5,q)
+
+resSGMM20 <- gibbsGMM(pcascore1vec, niter = 1000, nburn = 500, priors = priorsSGMM20)
+
+clusteringSGMM20 <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clusteringSGMM20[pixels[i,1],pixels[i,2]] = which.max(resSGMM20$alloc[i,])
+}
+
+print(table(clusteringSGMM20))
+```
+
+```{r}
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(clusteringSGMM20, border=NA,asp = TRUE,col =topo.colors(q),axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```
+
+# Prior means spread out
+
+## k = 5
+
+the idea is to use a large k and small alpha in order to assign more weights to the edges of the symplex trying to induce sparsity
+
+```{r}
+q <- 5
+
+priorsSGMM5 <- list()
+priorsSGMM5$k <- q
+priorsSGMM5$lambda <- rep(0.01,q)
+priorsSGMM5$mu <- seq(from = -30, to = 20, length.out = q)
+priorsSGMM5$mu.sd <- rep(100,q)
+priorsSGMM5$sigma <- rep(2,q)
+priorsSGMM5$sigma.nu <- rep(1.5,q)
+
+resSGMM5 <- gibbsGMM(pcascore1vec, niter = 1000, nburn = 500, priors = priorsSGMM5)
+
+clusteringSGMM5 <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clusteringSGMM5[pixels[i,1],pixels[i,2]] = which.max(resSGMM5$alloc[i,])
+}
+
+print(table(clusteringSGMM5))
+```
+
+```{r}
+
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(clusteringSGMM5, border=NA,asp = TRUE,col =topo.colors(q),axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```
+
+
+## k = 10
+
+the idea is to use a large k and small alpha in order to assign more weights to the edges of the symplex trying to induce sparsity 
+
+```{r}
+q <- 10
+
+priorsSGMM10 <- list()
+priorsSGMM10$k <- q
+priorsSGMM10$lambda <- rep(0.01,q)
+priorsSGMM10$mu <- seq(from = -30, to = 20, length.out = q)
+priorsSGMM10$mu.sd <- rep(100,q)
+priorsSGMM10$sigma <- rep(2,q)
+priorsSGMM10$sigma.nu <- rep(1.5,q)
+
+resSGMM10 <- gibbsGMM(pcascore1vec, niter = 1000, nburn = 500, priors = priorsSGMM10)
+
+clusteringSGMM10 <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clusteringSGMM10[pixels[i,1],pixels[i,2]] = which.max(resSGMM10$alloc[i,])
+}
+
+print(table(clusteringSGMM10))
+```
+
+```{r}
+
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(clusteringSGMM10, border=NA,asp = TRUE,col= topo.colors(q),axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```
+
+
+
+## k = 15
+
+```{r}
+q <- 15
+
+priorsSGMM15 <- list()
+priorsSGMM15$k <- q
+priorsSGMM15$lambda <- rep(0.01,q)
+priorsSGMM15$mu <- seq(from = -30, to = 20, length.out = q)
+priorsSGMM15$mu.sd <- rep(100,q)
+priorsSGMM15$sigma <- rep(2,q)
+priorsSGMM15$sigma.nu <- rep(1.5,q)
+
+resSGMM15 <- gibbsGMM(pcascore1vec, niter = 1000, nburn = 500, priors = priorsSGMM15)
+
+clusteringSGMM15 <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clusteringSGMM15[pixels[i,1],pixels[i,2]] = which.max(resSGMM15$alloc[i,])
+}
+
+print(table(clusteringSGMM15))
+```
+
+```{r}
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(clusteringSGMM15, border=NA,asp = TRUE,col =topo.colors(q),axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```
+
+
+
+## k = 20
+
+```{r}
+q <- 20
+
+priorsSGMM20 <- list()
+priorsSGMM20$k <- q
+priorsSGMM20$lambda <- rep(0.001,q)
+priorsSGMM20$mu <- seq(from = -34, to = 20, length.out = q)
+priorsSGMM20$mu.sd <- rep(100,q)
+priorsSGMM20$sigma <- rep(2,q)
+priorsSGMM20$sigma.nu <- rep(1.5,q)
+
+resSGMM20 <- gibbsGMM(pcascore1vec, niter = 1000, nburn = 500, priors = priorsSGMM20)
+
+clusteringSGMM20 <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clusteringSGMM20[pixels[i,1],pixels[i,2]] = which.max(resSGMM20$alloc[i,])
+}
+
+print(table(clusteringSGMM20))
+```
+
+```{r}
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(clusteringSGMM20, border=NA,asp = TRUE,col =topo.colors(q),axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```

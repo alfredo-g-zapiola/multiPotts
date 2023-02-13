@@ -1,0 +1,243 @@
+---
+title: "Beta investigation"
+author: Simone Colombara, Alessia Cotroneo, Francesco De Caro, Riccardo Morandi, Chiara Schembri,
+  Alfredo Zapiola
+date: "2022-11-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(lattice)
+library(tidyverse)
+library(rayshader)
+library(patchwork)
+library(bayesImageS)
+```
+
+
+
+```{r}
+pixels = read.table("/Users/macbookpro/Documents/Bayesian Statistics/Project/Raw_data/LIPIDI/78 variabili/101_lipidi-PreProcessed-XYCoordinates-Step1-Step2-Step4-Step5-101.txt")
+colnames(pixels) = c("x","y")
+D = read.table("/Users/macbookpro/Documents/Bayesian Statistics/Project/Raw_data/LIPIDI/78 variabili/101_lipidi-PreProcessed-IM-Step1-Step2-Step4-Step5-101.txt")
+D0 = D
+D0[is.na(D0)] = 0
+Data_long = as_tibble(data.frame( pixels, D0 ))
+max_number_of_pixels = apply(Data_long[,1:2],2,max)
+```
+
+we simulate data from different geometries in order to asses whether the beta critic is affected by it
+
+# square geomerty
+
+```{r }
+mask <-matrix(1,max_number_of_pixels[2],max_number_of_pixels[2])
+
+neigh <- getNeighbors(mask = mask, c(2,2,0,0))
+block <- getBlocks(mask = mask, 2)
+
+```
+
+
+```{r }
+beta <- seq(0, 2, by = 0.05)
+iter <- 1000
+burn <- 800
+n <- sum(mask)
+k <- 3
+bcrit <- log(1 + sqrt(k))
+samp.bIS <- matrix(nrow = length(beta), ncol = iter - burn)
+```
+
+
+```{r }
+for (i in 1:length(beta)) {
+  result <- swNoData(beta[i],k,neigh,block,iter)
+  samp.bIS[i,] <- result$sum[(burn+1):iter]
+}
+```
+
+
+```{r }
+s_z <- samp.bIS
+s_x <- rep(beta,times=iter-burn)
+sd_s <- rep(0,dim(s_z)[1])
+for(i in 1:dim(s_z)[1]){
+  sd_s[i] = sd(s_z[i,])
+}
+
+par(mfrow=c(1,2))
+plot(s_x,s_z,xlab=expression(beta),ylab=expression(S(z)))
+abline(v=bcrit,col="red")
+
+plot(beta,sd_s,xlab=expression(beta),ylab=expression(sigma[S(z)]))
+abline(v=bcrit,col="red")
+
+```
+
+# rectagular geometry
+
+```{r }
+mask <-matrix(1,max_number_of_pixels[1],max_number_of_pixels[2])
+
+neigh <- getNeighbors(mask = mask, c(2,2,0,0))
+block <- getBlocks(mask = mask, 2)
+
+```
+
+
+```{r }
+beta <- seq(0, 2, by = 0.05)
+iter <- 1000
+burn <- 800
+n <- sum(mask)
+k <- 3
+bcrit <- log(1 + sqrt(k))
+sampr.bIS <- matrix(nrow = length(beta), ncol = iter - burn)
+```
+
+
+```{r }
+for (i in 1:length(beta)) {
+  result <- swNoData(beta[i],k,neigh,block,iter)
+  samp.bIS[i,] <- result$sum[(burn+1):iter]
+}
+```
+
+
+```{r }
+s_zr <- samp.bIS
+s_xr <- rep(beta,times=iter-burn)
+sd_sr <- rep(0,dim(s_zr)[1])
+for(i in 1:dim(s_zr)[1]){
+  sd_sr[i] = sd(s_zr[i,])
+}
+
+par(mfrow=c(1,2))
+plot(s_xr,s_zr,xlab=expression(beta),ylab=expression(S(z)))
+abline(v=bcrit,col="red")
+
+plot(beta,sd_sr,xlab=expression(beta),ylab=expression(sigma[S(z)]))
+abline(v=bcrit,col="red")
+
+```
+
+
+# brain geometry
+
+```{r }
+mask <-matrix(0,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  mask[pixels[i,1],pixels[i,2]] = 1
+}
+
+neigh <- getNeighbors(mask = mask, c(2,2,0,0))
+block <- getBlocks(mask = mask, 2)
+
+```
+
+
+```{r }
+beta <- seq(0, 2, by = 0.05)
+iter <- 1000
+burn <- 800
+n <- sum(mask)
+k <- 3
+bcrit <- log(1 + sqrt(k))
+sampb.bIS <- matrix(nrow = length(beta), ncol = iter - burn)
+```
+
+
+```{r }
+for (i in 1:length(beta)) {
+  result <- swNoData(beta[i],k,neigh,block,iter)
+  samp.bIS[i,] <- result$sum[(burn+1):iter]
+}
+```
+
+
+```{r }
+s_zb <- samp.bIS
+s_xb <- rep(beta,times=iter-burn)
+sd_sb <- rep(0,dim(s_z)[1])
+for(i in 1:dim(s_z)[1]){
+  sd_sb[i] = sd(s_zb[i,])
+}
+
+par(mfrow=c(1,2))
+plot(s_xb,s_zb,xlab=expression(beta),ylab=expression(S(z)))
+abline(v=bcrit,col="red")
+
+plot(beta,sd_sb,xlab=expression(beta),ylab=expression(sigma[S(z)]))
+abline(v=bcrit,col="red")
+```
+
+```{r }
+par(mfrow=c(1,2))
+plot(s_x,s_z,xlab=expression(beta),ylab=expression(S(z)))
+points(s_xr,s_zr,col = "blue")
+points(s_xb,s_zb, col = "green")
+abline(v=bcrit,col="red")
+
+plot(beta,sd_s,xlab=expression(beta),ylab=expression(sigma[S(z)]))
+points(beta,sd_sr,col = "blue")
+points(beta,sd_sb, col = "green")
+abline(v=bcrit,col="red")
+
+```
+
+the geometry seems not to affect the value of beta critic
+
+# changing the order of the neighbourhood to second order
+
+```{r }
+mask <-matrix(0,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  mask[pixels[i,1],pixels[i,2]] = 1
+}
+
+neigh <- getNeighbors(mask = mask, c(2,2,2,2))
+block <- getBlocks(mask = mask, 4)
+
+```
+
+
+```{r }
+beta <- seq(0, 2, by = 0.05)
+iter <- 1000
+burn <- 200
+n <- sum(mask)
+k <- 3
+bcrit <- log(1 + sqrt(k))
+samp.bIS <- matrix(nrow = length(beta), ncol = iter - burn)
+```
+
+
+```{r }
+for (i in 1:length(beta)) {
+  result <- swNoData(beta[i],k,neigh,block,iter)
+  samp.bIS[i,] <- result$sum[(burn+1):iter]
+}
+```
+
+
+```{r }
+s_z <- samp.bIS
+s_x <- rep(beta,times=iter-burn)
+s.frame <- data.frame(s_z,c(s_x,s_x))
+names(s.frame) <- c("stat","beta")
+sd_s <- rep(0,dim(s_z)[1])
+for(i in 1:dim(s_z)[1]){
+  sd_s[i] = sd(s_z[i,])
+}
+
+par(mfrow=c(1,2))
+plot(s_x,s_z,xlab=expression(beta),ylab=expression(S(z)))
+abline(v=bcrit,col="red")
+
+plot(beta,sd_s,xlab=expression(beta),ylab=expression(sigma[S(z)]))
+abline(v=bcrit,col="red")
+```
+
+**the value of beta critic is affected by he order of the beighbourhood, in his case the theoretical estimate is not valid **

@@ -1,0 +1,156 @@
+---
+title: "sparse_finite_mixture"
+output: html_document
+date: "2022-12-04"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(patchwork)
+library(plot.matrix)
+library(bayesImageS)
+library(stats)
+library(viridis)
+
+
+D = read.table("C:/Users/simo9/Desktop/bayes proj/Glicani/85 variabili-20221203T074516Z-001/85 variabili/101_glicani-PreProcessed-IM-Step1-Step2-Step4-Step5-101.txt")
+D0 = D
+D0[is.na(D0)] = 0
+
+pixels = read.table("C:/Users/simo9/Desktop/bayes proj/Glicani/85 variabili-20221203T074516Z-001/85 variabili/101_glicani-PreProcessed-XYCoordinates-Step1-Step2-Step4-Step5-101.txt")
+colnames(D0) = substr(colnames(D0),1,5)
+colnames(pixels) = c("x","y")
+
+Data_long = as_tibble(data.frame( pixels, D0 ))
+max_number_of_pixels = apply(Data_long[,1:2],2,max)
+
+#CONVENTOIONAL PCA ON VECTOR DATA TO BE UPDATED ONCE WE FIX FPCA
+pca = princomp(D0)
+pcascore1vec = pca$scores[,1]
+
+par(mfrow=c(1,2))
+hist(pcascore1vec,main = "first pc score",breaks = 100)
+plot(density(pcascore1vec),main = "kernel density first pc score")
+# lets try fpca
+
+
+Data_very_long = reshape2::melt(Data_long,c("x","y")) %>% mutate(pixel_ind = paste0(x,"_",y), value_ind = rep(1:nrow(Data_long),ncol(D0)))
+
+detach("package:dplyr", unload = TRUE)
+library(dplyr)
+
+Data_very_long = Data_very_long %>% group_by(pixel_ind) %>% mutate(n = row_number()) %>% ungroup() %>% mutate(mz = as.numeric(substr(variable,2,4)))
+
+
+#FPCA
+
+library(fda)
+# first method 
+mz_values<-as.numeric(substr(Data_very_long$variable,2,7))
+mz_values<-unique(mz_values)
+basis <- create.bspline.basis(rangeval=c(min(mz_values),max(mz_values)),breaks=mz_values, norder = 2)
+D1<-as.matrix(D0)
+D1<-t(D1)
+data_W.fd.1 <- Data2fd(argvals = mz_values,y = D1,basisobj = basis)
+plot.fd(data_W.fd.1,xlab='mz',ylab='value')
+
+
+
+pca_W.1 <- pca.fd(data_W.fd.1,nharm=5,centerfns=TRUE)
+
+plot(pca_W.1$values[1:5],xlab='j',ylab='Eigenvalues')
+plot(cumsum(pca_W.1$values)[1:5]/sum(pca_W.1$values),xlab='j',ylab='CPV',ylim=c(0.5,1))
+
+
+par(mfrow=c(1,2))
+hist(pca_W.1$scores[,1],main = "first pc score",breaks = 100)
+plot(density(pca_W.1$scores[,1]),main = "kernel density first pc score")
+# clearly 2 gaussians would be enough
+
+#lets keep the fpca results
+pcascore1vec = pca_W.1$scores[,1]
+
+```
+
+
+
+#k = 6
+all prior means are set to zero
+the idea is to use a large k and small alpha in order to assign more weights to 
+the edges of the symplex trying to induce sparsity
+```{r}
+q <- 5
+
+priorsSGMM5 <- list()
+priorsSGMM5$k <- q
+priorsSGMM5$lambda <- rep(0.01,q)
+priorsSGMM5$mu <- rep(0,q)
+priorsSGMM5$mu.sd <- rep(100,q)
+priorsSGMM5$sigma <- rep(2,q)
+priorsSGMM5$sigma.nu <- rep(0.5,q)
+
+resSGMM5 <- gibbsGMM(pcascore1vec, niter = 1000, nburn = 500, priors = priorsSGMM5)
+
+clusteringSGMM5 <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clusteringSGMM5[pixels[i,1],pixels[i,2]] = which.max(resSGMM5$alloc[i,])
+}
+
+print(table(clusteringSGMM5))
+
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(clusteringSGMM5, border=NA,asp = TRUE,col =topo.colors(q),axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+
+```
+#k = 10
+```{r}
+q <- 10
+
+priorsSGMM10 <- list()
+priorsSGMM10$k <- q
+priorsSGMM10$lambda <- rep(0.01,q)
+priorsSGMM10$mu <- rep(0,q)
+priorsSGMM10$mu.sd <- rep(100,q)
+priorsSGMM10$sigma <- rep(2,q)
+priorsSGMM10$sigma.nu <- rep(1.5,q)
+
+resSGMM10 <- gibbsGMM(pcascore1vec, niter = 1000, nburn = 500, priors = priorsSGMM10)
+
+clusteringSGMM10 <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clusteringSGMM10[pixels[i,1],pixels[i,2]] = which.max(resSGMM10$alloc[i,])
+}
+
+print(table(clusteringSGMM10))
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(clusteringSGMM10, border=NA,asp = TRUE,col= topo.colors(q),axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+
+
+# prior means spread out
+q <- 5
+
+priorsSGMM5 <- list()
+priorsSGMM5$k <- q
+priorsSGMM5$lambda <- rep(0.01,q)
+priorsSGMM5$mu <- seq(from = -40, to = 30, length.out = q)
+priorsSGMM5$mu.sd <- rep(100,q)
+priorsSGMM5$sigma <- rep(2,q)
+priorsSGMM5$sigma.nu <- rep(0.5,q)
+
+resSGMM5 <- gibbsGMM(pcascore1vec, niter = 1000, nburn = 500, priors = priorsSGMM5)
+
+clusteringSGMM5 <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clusteringSGMM5[pixels[i,1],pixels[i,2]] = which.max(resSGMM5$alloc[i,])
+}
+
+print(table(clusteringSGMM5))
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(clusteringSGMM5, border=NA,asp = TRUE,col =topo.colors(q),axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+
+
+```

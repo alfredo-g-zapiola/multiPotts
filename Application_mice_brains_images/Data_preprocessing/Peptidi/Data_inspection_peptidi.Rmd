@@ -1,0 +1,696 @@
+---
+title: "Data Inspection Peptidi"
+author: Simone Colombara, Alessia Cotroneo, Francesco De Caro, Riccardo Morandi, Chiara   Schembri,
+  Alfredo Zapiola
+date: "2022-11-28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.width = 8,fig.height = 6)
+library(tidyverse)
+library(rayshader)
+library(patchwork)
+library(skimr)
+library(visdat)
+library(ggplot2)
+library(GGally)
+library(corrplot)
+```
+
+# A first inspection of the dataset with 154 variables
+
+## importing the data
+
+
+```{r, read data}
+P = read.table("/Users/macbookpro/Documents/Bayesian Statistics/Project/Raw_data/Peptidi/154 variabili/101_peptidi-PreProcessed-IM-Step1-Step2-Step4-Step5-101.txt")
+sum(is.na(P))
+```
+ the numbers of na is substantial
+```{r }
+ vis_miss(P,warn_large_data = FALSE)
+```
+the missing data is about 56% 
+ 
+```{r}
+skim(P)
+```
+
+we observe that the missing data is not uniform in the mz, there are some values for which only 20 - 30% of the pixel have a value, and this tends to be small, this is specially true in the for the large values of mz in this case
+
+we replace the missing data with 0 since it means the data for that mz was under threshold
+
+
+```{r}
+P0 = P
+P0[is.na(P0)] = 0
+
+```
+
+# correlation matrix
+```{r}
+cm <- cor(P0)
+corrplot(cm, method = "color", tl.pos = 'n')
+```
+
+we can see a correlation between the different mz values in blocks, we have the highest mz that seem o be unncorrelate to everithing else
+
+# preliminary plotts
+
+```{r}
+pixels = read.table("/Users/macbookpro/Documents/Bayesian Statistics/Project/Raw_data/Peptidi/154 variabili/101_peptidi-PreProcessed-XYCoordinates-Step1-Step2-Step4-Step5-101.txt")
+colnames(P0) = substr(colnames(P0),1,5)
+colnames(pixels) = c("x","y")
+max_n_of_pixel = read.table("/Users/macbookpro/Documents/Bayesian Statistics/Project/Raw_data/Peptidi/154 variabili/101_peptidi-PreProcessed-maxXY-Step1-Step2-Step4-Step5-101.txt")
+```
+
+```{r}
+Data_long            = as_tibble(data.frame( pixels, P0 ))
+max_number_of_pixels = apply(Data_long[,1:2],2,max)
+
+Data_array = matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+
+Data_array = array(NA,c(max_number_of_pixels[1],max_number_of_pixels[2],ncol(P0)))
+
+# there must be a better way to do this
+for(k in 1:ncol(P0)){
+  for(i in 1:nrow(Data_long)){
+  Data_array[Data_long$x[i],Data_long$y[i],k] = P0[i,k]
+  }
+}
+
+dim(Data_array)
+
+Data_very_long = reshape2::melt(Data_long,c("x","y")) %>% mutate(pixel_ind = paste0(x,"_",y), value_ind = rep(1:nrow(Data_long),ncol(P0)))
+Data_very_long = Data_very_long %>% group_by(pixel_ind) %>% mutate(n = row_number()) %>% ungroup() %>% mutate(mz = as.numeric(substr(variable,2,5)))
+
+```
+
+
+```{r}
+Data_very_long = reshape2::melt(Data_long,c("x","y")) %>% mutate(pixel_ind = paste0(x,"_",y), value_ind = rep(1:nrow(Data_long),ncol(P0)))
+
+Data_very_long = Data_very_long %>% group_by(pixel_ind) %>% mutate(n = row_number()) %>% ungroup() %>% mutate(mz = as.numeric(substr(variable,2,5)))
+
+
+# subsampling to get a faster plot and not drain memory
+sub_ind = sample(unique(Data_very_long$pixel_ind),1000)
+# just to get the gist:
+ggplot(Data_very_long %>% filter(pixel_ind %in% sub_ind))+
+  geom_path(aes(x = mz, y = value, 
+                col=pixel_ind, 
+                group = pixel_ind),alpha=.5)+theme_bw()+theme(legend.position = "none")+xlab("m.z")+scale_color_viridis_d(option = "A")+
+  scale_x_continuous(n.breaks = 20)
+
+mz_values <-  colnames(P0)
+```
+
+# investigating the different peaks
+
+## peaks arround 700
+
+```{r, echo = FALSE}
+
+P1 = ggplot(Data_long)+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = X703.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P2 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X704.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P3 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X705.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P4 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X706.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P5 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X721.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P6 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X722.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P1+P2+P3+P4+P5+P6
+
+```
+
+here we can see the first peaks that show a distinctive shape 
+
+## peak arround 750
+
+```{r, echo = FALSE}
+
+P1 = ggplot(Data_long)+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = X726.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P2 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X738.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P3 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X739.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P4 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X743.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P5 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X764.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P6 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X766.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P1+P2+P3+P4+P5+P6
+
+```
+
+this show the same pattern as before
+
+## peak at 800
+
+```{r, echo = FALSE}
+
+P1 = ggplot(Data_long)+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = X771.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P2 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X795.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P3 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X796.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P4 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X797.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P5 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X811.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P6 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X812.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P1+P2+P3+P4+P5+P6
+
+```
+
+still the same pattern the peak is at 811
+
+## peak arround 840
+
+```{r, echo = FALSE}
+
+P1 = ggplot(Data_long)+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = X813.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P2 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X816.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P3 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X817.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P4 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X818.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P5 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X833.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P6 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X839.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P1+P2+P3+P4+P5+P6
+
+```
+
+we have the same spots as in the glicani
+
+## peaks arround 840
+
+```{r, echo = FALSE}
+
+P1 = ggplot(Data_long)+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = X840.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P2 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X841.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P3 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X842.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P4 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X843.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P5 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X844.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P6 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X855.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P1+P2+P3+P4+P5+P6
+
+```
+
+we still have this spots and some edge activations, possible biological meaning?
+
+## peaks arround 860 
+
+```{r, echo = FALSE}
+
+P1 = ggplot(Data_long)+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = X856.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P2 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X857.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P3 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X859.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P4 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X860.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P5 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X871.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P6 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X872.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P1+P2+P3+P4+P5+P6
+
+```
+
+same patterns
+
+## peak arround 870
+
+```{r, echo = FALSE}
+
+P1 = ggplot(Data_long)+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = X872.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P2 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X873.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P3 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X874.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P4 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X877.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P5 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X878.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P6 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X881.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P1+P2+P3+P4+P5+P6
+
+```
+
+## peak around 900
+
+```{r, echo = FALSE}
+
+P1 = ggplot(Data_long)+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = X899.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P2 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X900.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P3 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X901.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P4 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X913.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P5 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X919.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P6 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X929.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P1+P2+P3+P4+P5+P6
+
+```
+
+complementary to the main pattern, not too high of spikes
+
+## peak arround 940
+
+```{r, echo = FALSE}
+
+P1 = ggplot(Data_long)+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = X930.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P2 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X944.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P3 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X945.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P4 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X951.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P5 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X966.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P6 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X968.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P1+P2+P3+P4+P5+P6
+
+```
+ same patterns
+ 
+ 
+```{r, echo = FALSE}
+
+P1 = ggplot(Data_long)+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = X969.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P2 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X982.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P3 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X989.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P4 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X1021))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P5 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X1023))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P6 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X1024))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P1+P2+P3+P4+P5+P6
+
+```
+
+same patterns
+
+## peak arround 1040
+
+```{r, echo = FALSE}
+
+P1 = ggplot(Data_long)+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = X1025))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P2 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X1026))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P3 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X1044))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P4 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X1045))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P5 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X1046))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P6 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X1047))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P1+P2+P3+P4+P5+P6
+
+```
+
+we have some spots that seem to be outlier, and the rest is just the same structure
+
+```{r, echo = FALSE}
+
+P1 = ggplot(Data_long)+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = X1066))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P2 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X1067))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P3 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X1068))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P4 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X1081))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P5 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X1082))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P6 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X1083))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P1+P2+P3+P4+P5+P6
+
+```
+
+same pattern
+
+## spike arroun 1100
+
+```{r, echo = FALSE}
+
+P1 = ggplot(Data_long)+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = X1099))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P2 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X1100))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P3 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X1101))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P4 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X1131))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P5 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X1132))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P6 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X1133))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P1+P2+P3+P4+P5+P6
+
+```
+
+same patter
+
+the rest is just noise and mow values of the same structure
+
+```{r, echo = FALSE}
+
+P1 = ggplot(Data_long)+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = X1241))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P2 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X1242))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P3 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X1255))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P4 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X1268))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P5 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X1287))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P6 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X1300))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P1+P2+P3+P4+P5+P6
+
+```
+
+
+# A comprehensive look at the peaks
+
+```{r, echo = FALSE}
+
+P1 = ggplot(Data_long)+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = X721.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P2 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X859.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P3 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X944.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P4 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X1081))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P5 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X1044))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P6 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X855.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P1+P2+P3+P4+P5+P6
+
+```
+
+
+# PCA
+
+```{r}
+pca = princomp(P0)
+plot(pca)
+summary(pca)
+```
+the pca works well  we have 92% explane d variance with 6 components
+
+```{r}
+
+PCA1 = ggplot(Data_long %>% mutate(pca1 = pca$scores[,1]))+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = pca1))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+PCA2 = ggplot(Data_long %>% mutate(pca2 = pca$scores[,2]))+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = pca2))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+PCA3 = ggplot(Data_long %>% mutate(pca3 = pca$scores[,3]))+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = pca3))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+PCA4 = ggplot(Data_long %>% mutate(pca4 = pca$scores[4]))+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = pca4))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+PCA5 = ggplot(Data_long %>% mutate(pca5 = pca$scores[,5]))+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = pca5))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+PCA6 = ggplot(Data_long %>% mutate(pca6 = pca$scores[,6]))+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = pca6))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+
+PCA1+PCA2+PCA3+PCA4+PCA5+PCA6
+```
+
+ we can clearly see the main patterns in the data
+ 
+## comparing the pca scores with the data
+ 
+```{r}
+
+PCA1 = ggplot(Data_long %>% mutate(pca1 = pca$scores[,1]))+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = pca1))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+PCA3 = ggplot(Data_long %>% mutate(pca3 = pca$scores[,3]))+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = pca3))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+PCA5 = ggplot(Data_long %>% mutate(pca5 = pca$scores[,5]))+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = pca5))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+PCA6 = ggplot(Data_long %>% mutate(pca6 = pca$scores[,6]))+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = pca6))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P1 = ggplot(Data_long)+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = X705.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P2 = ggplot(Data_long)+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = X859.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+
+PCA1+PCA3+PCA5+PCA6+P1+P2
+```
+
+## corresponding conponent
+
+these are the conponentss of the main shape
+
+```{r,echo = FALSE}
+mz_value = as.numeric(substr(colnames(P),2,7))
+b1 = data.frame(pca$loadings[,1])
+b1$mz =mz_value
+ggplot(b1)+ geom_path(aes(x = mz, y = -1*pca.loadings...1.))+theme_bw()+theme(legend.position = "none")+xlab("m.z")+scale_color_viridis_d(option = "A")+
+  scale_x_continuous(n.breaks = 20)
+```
+
+```{r,echo = FALSE}
+mz_value = as.numeric(substr(colnames(P),2,7))
+b3 = data.frame(pca$loadings[,3])
+b3$mz =mz_value
+ggplot(b3)+ geom_path(aes(x = mz, y = pca.loadings...3.))+theme_bw()+theme(legend.position = "none")+xlab("m.z")+scale_color_viridis_d(option = "A")+
+  scale_x_continuous(n.breaks = 20)
+```
+
+
+## the sacond pca score is X842
+
+```{r}
+
+PCA2 = ggplot(Data_long %>% mutate(pca2 = pca$scores[,2]))+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = pca2))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P2 = ggplot(Data_long)+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = X842.))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+PCA2+P2
+```
+
+## corresponding conponent
+
+```{r,echo = FALSE}
+mz_value = as.numeric(substr(colnames(P),2,7))
+b2 = data.frame(pca$loadings[,2])
+b2$mz =mz_value
+ggplot(b2)+ geom_path(aes(x = mz, y = pca.loadings...2.))+theme_bw()+theme(legend.position = "none")+xlab("m.z")+scale_color_viridis_d(option = "A")+
+  scale_x_continuous(n.breaks = 20)
+```
+
+as expected is just 842 
+
+## should we do somehing about this?
+

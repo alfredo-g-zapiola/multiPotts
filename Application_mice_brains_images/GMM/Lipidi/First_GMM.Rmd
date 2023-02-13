@@ -1,0 +1,258 @@
+---
+title: "First GMM"
+author: Simone Colombara, Alessia Cotroneo, Francesco De Caro, Riccardo Morandi, Chiara
+  Schembri, Alfredo Zapiola
+date: "2022-11-16"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(rayshader)
+library(patchwork)
+library(plot.matrix)
+library(bayesImageS)
+library(stats)
+```
+
+# First example of gaussian mixture models
+### we use this as a baseline with k = 3,6,9 as in k-means
+
+```{r}
+D = read.table("/Users/macbookpro/Documents/Bayesian Statistics/Project/Raw_data/LIPIDI/78 variabili/101_lipidi-PreProcessed-IM-Step1-Step2-Step4-Step5-101.txt")
+D0 = D
+D0[is.na(D0)] = 0
+
+pixels = read.table("/Users/macbookpro/Documents/Bayesian Statistics/Project/Raw_data/LIPIDI/78 variabili/101_lipidi-PreProcessed-XYCoordinates-Step1-Step2-Step4-Step5-101.txt")
+colnames(D0) = substr(colnames(D0),1,4)
+colnames(pixels) = c("x","y")
+
+Data_long = as_tibble(data.frame( pixels, D0 ))
+max_number_of_pixels = apply(Data_long[,1:2],2,max)
+
+Data_very_long = reshape2::melt(Data_long,c("x","y")) %>% mutate(pixel_ind = paste0(x,"_",y), value_ind = rep(1:nrow(Data_long),ncol(D0)))
+Data_very_long = Data_very_long %>% group_by(pixel_ind) %>% mutate(n = row_number()) %>% ungroup() %>% mutate(mz = as.numeric(substr(variable,2,4)))
+```
+
+## CONVENTOIONAL PCA ON VECTOR DATA TO BE UPDATED ONCE WE FIX FPCA
+
+```{r}
+pca = princomp(D0)
+```
+
+auxiliary vector of principal components
+
+```{r}
+pcascore1vec = pca$scores[,1]
+max(pcascore1vec)
+min(pcascore1vec)
+mean(pcascore1vec)
+sd(pcascore1vec)
+library(viridis)
+```
+
+```{r}
+par(mfrow=c(1,2))
+hist(pcascore1vec,main = "first pc score",breaks = 100)
+plot(density(pcascore1vec),main = "kernel density first pc score")
+```
+
+# NON informative priors
+
+**the parametrization of the gamma is shape and rate (sigma is alpha but nu is beta)** 
+
+let's try to be as non informative as possible since we have n = 18229:
+- for he Dir parameter we use lambda = 1
+- for the mu.sd we use 30 since this will allow us to cover the whole range of values
+- for the mu let's start from all equal to zero (which is the sample mean of the scores)
+- for the parameters of the sd we want a mean of 16 as is the empirical sd 
+- we chose alpha = 2 beta = 0.125 to get fat tails and be non informative
+
+## k = 3
+
+```{r}
+q <- 3
+
+priorsGMM3 <- list()
+priorsGMM3$k <- q
+priorsGMM3$lambda <- rep(1,q)
+priorsGMM3$mu <- rep(0,q)
+priorsGMM3$mu.sd <- rep(30,q)
+priorsGMM3$sigma <- rep(2,q)
+priorsGMM3$sigma.nu <- rep(0.125,q)
+
+resGMM3 <- gibbsGMM(pcascore1vec, niter = 5000, nburn = 2000, priors = priorsGMM3)
+
+clusteringGMM3 <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clusteringGMM3[pixels[i,1],pixels[i,2]] = which.max(resGMM3$alloc[i,])
+}
+print(table(clusteringGMM3))
+```
+
+```{r}
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(clusteringGMM3, border=NA,asp = TRUE,col= turbo,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```
+
+
+## K = 6
+
+```{r}
+q <- 6
+
+priorsGMM6 <- list()
+priorsGMM6$k <- q
+priorsGMM6$lambda <- rep(1,q)
+priorsGMM6$mu <- rep(0,q)
+priorsGMM6$mu.sd <- rep(30,q)
+priorsGMM6$sigma <- rep(2,q)
+priorsGMM6$sigma.nu <- rep(0.125,q)
+
+resGMM6 <- gibbsGMM(pcascore1vec, niter = 5000, nburn = 2000, priors = priorsGMM6)
+
+clusteringGMM6 <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clusteringGMM6[pixels[i,1],pixels[i,2]] = which.max(resGMM6$alloc[i,])
+}
+print(table(clusteringGMM6))
+```
+
+
+```{r}
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(clusteringGMM6, border=NA,asp = TRUE,col= inferno,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```
+
+
+## K = 9
+
+```{r}
+q <- 9
+
+priorsGMM9 <- list()
+priorsGMM9$k <- q
+priorsGMM9$lambda <- rep(1,q)
+priorsGMM9$mu <- rep(1,q)
+priorsGMM9$mu.sd <- rep(30,q)
+priorsGMM9$sigma <- rep(2,q)
+priorsGMM9$sigma.nu <- rep(0.125,q)
+
+resGMM9 <- gibbsGMM(pcascore1vec, niter = 10000, nburn = 500, priors = priorsGMM9)
+
+clusteringGMM9 <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clusteringGMM9[pixels[i,1],pixels[i,2]] = which.max(resGMM9$alloc[i,])
+}
+print(table(clusteringGMM9))
+```
+
+
+```{r}
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(clusteringGMM9, border=NA,asp = TRUE,col= turbo,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```
+
+# more informative on the priors:
+- the mu are more spread out in the range of possible values 
+- the variance of the mus is reduced to 10
+- for the sigmas we keep the same as for the Dir parameter lambda
+
+
+## k = 3
+
+```{r}
+q <- 3
+
+priorsGMM3 <- list()
+priorsGMM3$k <- q
+priorsGMM3$lambda <- rep(1,q)
+priorsGMM3$mu <- c(-15,0,15)
+priorsGMM3$mu.sd <- rep(10,q)
+priorsGMM3$sigma <- rep(2,q)
+priorsGMM3$sigma.nu <- rep(0.125,q)
+
+resGMM3 <- gibbsGMM(pcascore1vec, niter = 5000, nburn = 2000, priors = priorsGMM3)
+
+clusteringGMM3 <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clusteringGMM3[pixels[i,1],pixels[i,2]] = which.max(resGMM3$alloc[i,])
+}
+print(table(clusteringGMM3))
+```
+
+```{r}
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(clusteringGMM3, border=NA,asp = TRUE,col= plasma,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```
+
+
+## K = 6
+
+```{r}
+q <- 6
+
+priorsGMM6 <- list()
+priorsGMM6$k <- q
+priorsGMM6$lambda <- rep(1,q)
+priorsGMM6$mu <- c(-23,-15,-7,0,7,15)
+priorsGMM6$mu.sd <- rep(10,q)
+priorsGMM6$sigma <- rep(2,q)
+priorsGMM6$sigma.nu <- rep(0.125,q)
+
+resGMM6 <- gibbsGMM(pcascore1vec, niter = 5000, nburn = 2000, priors = priorsGMM6)
+
+clusteringGMM6 <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clusteringGMM6[pixels[i,1],pixels[i,2]] = which.max(resGMM6$alloc[i,])
+}
+print(table(clusteringGMM6))
+```
+
+
+```{r}
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(clusteringGMM6,border=NA,asp = TRUE,col= turbo,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```
+
+
+## K = 9
+
+```{r}
+q <- 9
+
+priorsGMM9 <- list()
+priorsGMM9$k <- q
+priorsGMM9$lambda <- rep(1,q)
+priorsGMM9$mu <- c(-25,-20,-15,-10,-5,0,5,10,15)
+priorsGMM9$mu.sd <- rep(10,q)
+priorsGMM9$sigma <- rep(2,q)
+priorsGMM9$sigma.nu <- rep(0.125,q)
+
+resGMM9 <- gibbsGMM(pcascore1vec, niter = 5000, nburn = 2000, priors = priorsGMM9)
+
+clusteringGMM9 <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clusteringGMM9[pixels[i,1],pixels[i,2]] = which.max(resGMM9$alloc[i,])
+}
+print(table(clusteringGMM9))
+```
+
+
+```{r}
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(clusteringGMM9, border=NA,asp = TRUE,col=turbo,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```
+
+# questions:
+
+- how do we chose k, can we take the values from the sparse finite mixture models? they will suggest from 3 to 7 af k
+- how informative should we be with our priors and do the choices we have done make sense
+
+
+
+

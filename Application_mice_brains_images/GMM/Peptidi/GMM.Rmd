@@ -1,0 +1,207 @@
+---
+title: "GMM"
+output: html_document
+date: "2022-12-04"
+---
+
+```{r libraries, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+
+library(rayshader)
+library(patchwork)
+library(plot.matrix)
+library(bayesImageS)
+library(stats)
+library(viridis)
+```
+
+importing data as usual
+
+```{r}
+D = read.table("101_peptidi-PreProcessed-IM-Step1-Step2-Step4-Step5-101.txt")
+D0 = D
+D0[is.na(D0)] = 0
+
+pixels = read.table("101_peptidi-PreProcessed-XYCoordinates-Step1-Step2-Step4-Step5-101.txt")
+colnames(D0) = substr(colnames(D0),1,4)
+colnames(pixels) = c("x","y")
+Data_long = as_tibble(data.frame( pixels, D0 ))
+max_number_of_pixels = apply(Data_long[,1:2],2,max)
+```
+
+##CONVENTOIONAL PCA ON VECTOR DATA 
+**TO BE UPDATED ONCE WE FIX FPCA**
+
+```{r}
+pca = princomp(D0)
+pcascore1vec = pca$scores[,1]
+par(mfrow=c(1,1))
+plot(density(pcascore1vec),main = "kernel density first pc score")
+
+PCA1 = ggplot(Data_long %>% mutate(pca1 = pca$scores[,1]))+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = pca1))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+PCA1
+
+max(pcascore1vec)
+min(pcascore1vec)
+mean(pcascore1vec)
+sd(pcascore1vec)
+```
+
+## UNINFORMATIVE PRIORS
+
+#k=2
+
+```{r}
+q <- 2
+
+priorsGMM2 <- list()
+priorsGMM2$k <- q
+priorsGMM2$lambda <- rep(1,q)
+priorsGMM2$mu <- rep(0,q)
+priorsGMM2$mu.sd <- rep(70,q)
+priorsGMM2$sigma <- rep(4,q)
+priorsGMM2$sigma.nu <- rep(0.1,q)
+
+resGMM2 <- gibbsGMM(pcascore1vec, niter = 5000, nburn = 2000, priors = priorsGMM2)
+
+clusteringGMM2 <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clusteringGMM2[pixels[i,1],pixels[i,2]] = which.max(resGMM2$alloc[i,])
+}
+print(table(clusteringGMM2))
+
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(clusteringGMM2, border=NA,asp = TRUE,col =turbo,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```
+
+#k=3
+
+```{r}
+q <- 3
+
+priorsGMM3 <- list()
+priorsGMM3$k <- q
+priorsGMM3$lambda <- rep(1,q)
+priorsGMM3$mu <- rep(0,q)
+priorsGMM3$mu.sd <- rep(70,q)
+priorsGMM3$sigma <- rep(4,q)
+priorsGMM3$sigma.nu <- rep(0.1,q)
+
+resGMM3 <- gibbsGMM(pcascore1vec, niter = 5000, nburn = 2000, priors = priorsGMM3)
+
+clusteringGMM3 <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clusteringGMM3[pixels[i,1],pixels[i,2]] = which.max(resGMM3$alloc[i,])
+}
+print(table(clusteringGMM3))
+
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(clusteringGMM3, border=NA,asp = TRUE,col =turbo,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```
+
+#k=4
+
+```{r}
+q <- 4
+
+priorsGMM4 <- list()
+priorsGMM4$k <- q
+priorsGMM4$lambda <- rep(1,q)
+priorsGMM4$mu <- rep(0,q)
+priorsGMM4$mu.sd <- rep(70,q)
+priorsGMM4$sigma <- rep(4,q)
+priorsGMM4$sigma.nu <- rep(0.1,q)
+
+resGMM4 <- gibbsGMM(pcascore1vec, niter = 5000, nburn = 2000, priors = priorsGMM4)
+
+clusteringGMM4 <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clusteringGMM4[pixels[i,1],pixels[i,2]] = which.max(resGMM4$alloc[i,])
+}
+print(table(clusteringGMM4))
+
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(clusteringGMM4, border=NA,asp = TRUE,col =turbo,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```
+
+
+##MORE INFORMATIVE PRIORS
+
+#k=2
+
+```{r}
+q <- 2
+
+priorsGMM2 <- list()
+priorsGMM2$k <- q
+priorsGMM2$lambda <- rep(1,q)
+priorsGMM2$mu <- c(-5, 45)
+priorsGMM2$mu.sd <- rep(16,q)
+priorsGMM2$sigma <- rep(4,q)
+priorsGMM2$sigma.nu <- rep(0.1,q)
+
+resGMM2 <- gibbsGMM(pcascore1vec, niter = 5000, nburn = 2000, priors = priorsGMM2)
+
+clusteringGMM2 <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clusteringGMM2[pixels[i,1],pixels[i,2]] = which.max(resGMM2$alloc[i,])
+}
+print(table(clusteringGMM2))
+
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(clusteringGMM2, border=NA,asp = TRUE,col =turbo,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```
+
+#k=3
+
+```{r}
+q <- 3
+
+priorsGMM3 <- list()
+priorsGMM3$k <- q
+priorsGMM3$lambda <- rep(1,q)
+priorsGMM3$mu <- c(-15,0,45)
+priorsGMM3$mu.sd <- rep(20,q)
+priorsGMM3$sigma <- rep(4,q)
+priorsGMM3$sigma.nu <- rep(0.1,q)
+
+resGMM3 <- gibbsGMM(pcascore1vec, niter = 5000, nburn = 2000, priors = priorsGMM3)
+
+clusteringGMM3 <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clusteringGMM3[pixels[i,1],pixels[i,2]] = which.max(resGMM3$alloc[i,])
+}
+print(table(clusteringGMM3))
+
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(clusteringGMM3, border=NA,asp = TRUE,col =turbo,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```
+
+#k=4
+
+```{r}
+q <- 4
+
+priorsGMM4 <- list()
+priorsGMM4$k <- q
+priorsGMM4$lambda <- rep(1,q)
+priorsGMM4$mu <- c(-15,0,25,45)
+priorsGMM4$mu.sd <- rep(20,q)
+priorsGMM4$sigma <- rep(4,q)
+priorsGMM4$sigma.nu <- rep(0.1,q)
+
+resGMM4 <- gibbsGMM(pcascore1vec, niter = 5000, nburn = 2000, priors = priorsGMM4)
+
+clusteringGMM4 <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clusteringGMM4[pixels[i,1],pixels[i,2]] = which.max(resGMM4$alloc[i,])
+}
+print(table(clusteringGMM4))
+
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(clusteringGMM4, border=NA,asp = TRUE,col =turbo,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```

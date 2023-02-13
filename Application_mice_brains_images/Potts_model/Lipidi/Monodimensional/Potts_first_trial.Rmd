@@ -1,0 +1,701 @@
+---
+title: "Potts_first_trial"
+author: "Riccardo Morandi"
+date: "2022-10-29"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r libraries, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(rayshader)
+library(patchwork)
+library(ggplot2)
+library(plot.matrix)
+library(bayesImageS)
+library(coda)
+```
+
+inporting data as usual
+
+
+```{r}
+D = read.table("/Users/macbook/Documents/Bayesian Statistics/Project/Raw_data/LIPIDI/78 variabili/101_lipidi-PreProcessed-IM-Step1-Step2-Step4-Step5-101.txt")
+D0 = D
+D0[is.na(D0)] = 0
+
+pixels = read.table("/Users/macbook/Documents/Bayesian Statistics/Project/Raw_data/LIPIDI/78 variabili/101_lipidi-PreProcessed-XYCoordinates-Step1-Step2-Step4-Step5-101.txt")
+colnames(D0) = substr(colnames(D0),1,4)
+colnames(pixels) = c("x","y")
+
+Data_long = as_tibble(data.frame( pixels, D0 ))
+max_number_of_pixels = apply(Data_long[,1:2],2,max)
+
+Data_very_long = reshape2::melt(Data_long,c("x","y")) %>% mutate(pixel_ind = paste0(x,"_",y), value_ind = rep(1:nrow(Data_long),ncol(D0)))
+Data_very_long = Data_very_long %>% group_by(pixel_ind) %>% mutate(n = row_number()) %>% ungroup() %>% mutate(mz = as.numeric(substr(variable,2,4)))
+
+```
+
+# CONVENTOIONAL PCA ON VECTOR DATA 
+**TO BE UPDATED ONCE WE FIX FPCA**
+
+```{r}
+pca = princomp(D0)
+#auxiliary vector of pca components
+pcascore1 <-as.vector(pca$scores[,1])
+
+max(pca$score[,1])
+min(pca$score[,1])
+
+#sanity check
+sum(is.na(pcascore1))
+```
+
+building auxiliary mask to pass junst the measured pixels to the functions
+
+```{r}
+mask <-matrix(0,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  mask[pixels[i,1],pixels[i,2]] = 1
+}
+
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(mask, border=NA,asp = TRUE)
+```
+
+# K = 3
+
+Specifying the number of clusters, the priors and the Metropolis-Hastings parameters
+
+```{r}
+q <- 3
+betacritic = log(1 + sqrt(q))
+neigh <- getNeighbors(mask = mask, c(2,2,0,0))
+block <- getBlocks(mask = mask, 2)
+
+priors <- list()
+priors$k <- q
+priors$mu <- c(-5,0,5)
+priors$mu.sd <- rep(0.5,q)
+priors$sigma <- rep(2,q)
+priors$sigma.nu <- rep(1.5,q)
+priors$beta <- c(0,betacritic)
+
+mh <- list(algorithm="pseudolikelihood", bandwidth=1)
+```
+
+```{r, results='hide'}
+res <- mcmcPotts(pcascore1, neigh, block, priors, mh, 10000, 5000)
+```
+
+## chain analysis 
+
+```{r}
+muchain = mcmc(res$mu)
+varnames(muchain)<-c("mu_1","mu_2","mu_3")
+sigmachain = mcmc(res$sigma)
+varnames(sigmachain)<-c("sigma_1","sigma_2","sigma_3")
+betachain = mcmc(res$beta)
+varnames(betachain)<-c("beta")
+sumchain  = mcmc(res$sum)
+varnames(sumchain)<-c("sum")
+```
+
+### mu
+
+```{r}
+
+summary(muchain)
+batchSE(muchain)
+effectiveSize(muchain)
+rejectionRate(muchain)
+# still need to understand this since i am using adaptive mh alg
+plot(muchain)
+
+par(mfrow=c(3,1))
+autocorr.plot(muchain,auto.layout=FALSE)
+
+crosscorr.plot(muchain)
+```
+
+### sigma 
+
+```{r}
+
+summary(sigmachain)
+batchSE(sigmachain)
+effectiveSize(sigmachain)
+
+plot(sigmachain)
+
+par(mfrow=c(3,1))
+autocorr.plot(sigmachain,auto.layout=FALSE)
+```
+
+### sum
+
+```{r}
+summary(sumchain)
+batchSE(sumchain)
+effectiveSize(sumchain)
+
+plot(sumchain)
+
+autocorr.plot(sumchain)
+```
+
+up to here the chain does not present mixing problems (this is probably due to the adaptiveness of the algorithm that prevents it) 
+other than high autocorrelation that can be fixed by thinning the chain
+
+### beta
+
+```{r}
+summary(betachain)
+batchSE(betachain)
+effectiveSize(betachain)
+
+plot(betachain)
+
+autocorr.plot(betachain)
+```
+
+this seems to want to go up but I fixed the threshold to beta critic to avoid the beta from exploding and giving all uniform parameters
+
+## plot
+
+```{r}
+clustering <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clustering[pixels[i,1],pixels[i,2]] = res$e[i]
+}
+
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(clustering, border=NA,asp = TRUE,col = rainbow)
+```
+
+
+## removing the constraints on beta 
+
+```{r, results='hide'}
+priors2 <- list()
+priors2$k <- q
+priors2$mu <- c(-5,0,5)
+priors2$mu.sd <- rep(0.5,q)
+priors2$sigma <- rep(2,q)
+priors2$sigma.nu <- rep(1.5,q)
+priors2$beta <- c(0,2*betacritic)
+
+mh2 <- list(algorithm="pseudolikelihood", bandwidth=1)
+
+res2 <- mcmcPotts(pcascore1, neigh, block, priors2, mh2, 10000, 5000)
+
+clustering2 <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clustering2[pixels[i,1],pixels[i,2]] = res2$e[i]
+}
+```
+
+```{r}
+
+muchain2 = mcmc(res2$mu)
+varnames(muchain2)<-c("mu_1","mu_2","mu_3")
+sigmachain2 = mcmc(res2$sigma)
+varnames(sigmachain2)<-c("sigma_1","sigma_2","sigma_3")
+betachain2 = mcmc(res2$beta)
+varnames(betachain2)<-c("beta")
+sumchain2  = mcmc(res2$sum)
+varnames(sumchain2)<-c("sum")
+
+```
+
+### mu
+
+```{r}
+
+summary(muchain2)
+batchSE(muchain2)
+effectiveSize(muchain2)
+rejectionRate(muchain2)
+# still need to understand this since i am using adaptive mh alg
+
+plot(muchain2)
+
+par(mfrow=c(3,1))
+autocorr.plot(muchain2,auto.layout=FALSE)
+
+crosscorr.plot(muchain2)
+
+```
+
+### sigma
+
+```{r}
+summary(sigmachain2)
+batchSE(sigmachain2)
+effectiveSize(sigmachain2)
+
+plot(sigmachain2)
+
+par(mfrow=c(3,1))
+autocorr.plot(sigmachain2,auto.layout=FALSE)
+```
+
+### sum
+
+```{r}
+summary(sumchain2)
+batchSE(sumchain2)
+effectiveSize(sumchain2)
+
+plot(sumchain2)
+
+autocorr.plot(sumchain2)
+```
+
+still needs thinning
+
+### beta
+
+```{r}
+summary(betachain2)
+batchSE(betachain2)
+effectiveSize(betachain2)
+
+plot(betachain2)
+
+autocorr.plot(betachain2)
+
+```
+
+this seems to want to go up but I fixed the threshold to beta critic to avoid the beta from exploding and giving all uniform parameters
+the beta stabilizes at 1.6 which is above the beta critic
+
+## plot
+
+```{r}
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(clustering, border=NA,asp = TRUE,col = rainbow)
+```
+
+I now will try with different values of q to see the difference in particular with q = 6 and 9 to compare with the kmeans baseline
+I will try both the constrained  and not constrained beta
+
+# K = 6
+
+```{r, results='hide'}
+q <- 6
+betacritic6 = log(1 + sqrt(q))
+neigh <- getNeighbors(mask = mask, c(2,2,0,0))
+block <- getBlocks(mask = mask, 2)
+
+priors6 <- list()
+priors6$k <- q
+priors6$mu <- c(-5,-2.5,0,2.5,5,7.5)
+priors6$mu.sd <- rep(0.5,q)
+priors6$sigma <- rep(2,q)
+priors6$sigma.nu <- rep(1.5,q)
+priors6$beta <- c(0,betacritic6)
+
+mh6 <- list(algorithm="pseudolikelihood", bandwidth=1)
+
+res6 <- mcmcPotts(pcascore1, neigh, block, priors6, mh6, 10000, 5000)
+
+clustering6 <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clustering6[pixels[i,1],pixels[i,2]] = res6$e[i]
+}
+
+```
+
+## chain analysis
+
+```{r}
+muchain6 = mcmc(res6$mu)
+varnames(muchain6)<-c("mu_1","mu_2","mu_3","mu_4","mu_5","mu_6")
+sigmachain6 = mcmc(res6$sigma)
+varnames(sigmachain6)<-c("sigma_1","sigma_2","sigma_3","sigma_4","sigma_5","sigma_6")
+betachain6 = mcmc(res6$beta)
+varnames(betachain6)<-c("beta")
+sumchain6  = mcmc(res6$sum)
+varnames(sumchain6)<-c("sum")
+
+```
+
+### mu 
+
+```{r}
+summary(muchain6)
+batchSE(muchain6)
+effectiveSize(muchain6)
+rejectionRate(muchain6)
+
+
+plot(muchain6)
+
+par(mfrow=c(2,3))
+autocorr.plot(muchain6,auto.layout=FALSE)
+
+crosscorr.plot(muchain6)
+```
+
+### sigma
+
+```{r}
+summary(sigmachain6)
+batchSE(sigmachain6)
+effectiveSize(sigmachain6)
+
+plot(sigmachain6)
+
+par(mfrow=c(2,3))
+autocorr.plot(sigmachain6,auto.layout=FALSE)
+```
+
+### sum
+
+```{r}
+summary(sumchain6)
+batchSE(sumchain6)
+effectiveSize(sumchain6)
+
+plot(sumchain6)
+autocorr.plot(sumchain6)
+```
+
+### beta
+
+```{r}
+summary(betachain6)
+batchSE(betachain6)
+effectiveSize(betachain6)
+
+plot(betachain6)
+
+autocorr.plot(betachain6)
+# there are a lot of mixing problems with the chain, i am rejecting all the time in mh
+#res6$accept is 54 on 10000 samples keeping in mind that we used an adaptive alg and the final bandwidth is 0.03603595
+```
+
+there are a lot of mixing problems with the chain, i am rejecting all the time in mh
+res6$accept is 54 on 10000 samples keeping in mind that we used an adaptive alg and the final bandwidth is 0.03603595
+
+## plot
+
+```{r}
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(clustering6, border=NA,asp = TRUE,col = rainbow)
+```
+
+
+## removing the constraint on beta critic 
+
+```{r, results='hide'}
+priors6b <- priors6
+priors6b$beta <- c(0,2*betacritic6)
+
+res6b <- mcmcPotts(pcascore1, neigh, block, priors6b, mh6, 10000, 5000)
+
+clustering6b <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clustering6b[pixels[i,1],pixels[i,2]] = res6b$e[i]
+}
+```
+
+
+```{r}
+muchain6b = mcmc(res6b$mu)
+varnames(muchain6b)<-c("mu_1","mu_2","mu_3","mu_4","mu_5","mu_6")
+sigmachain6b = mcmc(res6b$sigma)
+varnames(sigmachain6b)<-c("sigma_1","sigma_2","sigma_3","sigma_4","sigma_5","sigma_6")
+betachain6b = mcmc(res6b$beta)
+varnames(betachain6b)<-c("beta")
+sumchain6b  = mcmc(res6b$sum)
+varnames(sumchain6b)<-c("sum")
+
+```
+
+### mu
+
+```{r}
+summary(muchain6b)
+batchSE(muchain6b)
+
+effectiveSize(muchain6b)
+rejectionRate(muchain6b)
+
+plot(muchain6b)
+
+par(mfrow=c(2,3))
+autocorr.plot(muchain6b,auto.layout=FALSE)
+
+crosscorr.plot(muchain6b)
+# there are weird jumps int he chain i don't know why
+```
+
+### sigma
+
+```{r}
+summary(sigmachain6b)
+batchSE(sigmachain6b)
+effectiveSize(sigmachain6b)
+
+plot(sigmachain6b)
+
+par(mfrow=c(2,3))
+autocorr.plot(sigmachain6b,auto.layout=FALSE)
+```
+
+this needs to be thinned as well 
+
+### sum
+
+```{r}
+summary(sumchain6b)
+batchSE(sumchain6b)
+effectiveSize(sumchain6b)
+
+plot(sumchain6b)
+
+autocorr.plot(sumchain6b)
+```
+
+other than high autocorrelation that can be fixed by thinning the chain
+
+### beta
+
+```{r}
+summary(betachain6b)
+batchSE(betachain6b)
+effectiveSize(betachain6b)
+
+plot(betachain6b)
+
+autocorr.plot(betachain6b)
+```
+
+ we don't have the problem of rejecting like in the othe chain
+ beta also in this case goes to arround 2 which is bigger than betacritic6 = 1.238226
+ 
+## plot
+ 
+```{r}
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(clustering6b, border=NA,asp = TRUE,col = rainbow)
+```
+ this clearly suffers from the beta problem there is a dominationg class 
+ 
+```{r}
+ print(table(res6b$e))
+```
+
+# K = 9
+
+```{r, results='hide'}
+q <- 9
+betacritic9 = log(1 + sqrt(q))
+
+priors9 <- list()
+priors9$k <- q
+priors9$mu <- c(-8,-6,-4,-2,0,2,4,6,8)
+priors9$mu.sd <- rep(0.5,q)
+priors9$sigma <- rep(2,q)
+priors9$sigma.nu <- rep(1.5,q)
+priors9$beta <- c(0,betacritic9)
+
+mh9 <- list(algorithm="pseudolikelihood", bandwidth=1)
+
+res9 <- mcmcPotts(pcascore1, neigh, block, priors9, mh9, 10000, 5000)
+
+clustering9 <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clustering9[pixels[i,1],pixels[i,2]] = res9$e[i]
+}
+```
+
+## chain analysis
+
+```{r}
+muchain9 = mcmc(res9$mu)
+varnames(muchain9)<-c("mu_1","mu_2","mu_3","mu_4","mu_5","mu_6","mu_7","mu_8","mu_9")
+sigmachain9 = mcmc(res9$sigma)
+varnames(sigmachain9)<-c("sigma_1","sigma_2","sigma_3","sigma_4","sigma_5","sigma_6","sigma_7","sigma_8","sigma_9")
+betachain9 = mcmc(res9$beta)
+varnames(betachain9)<-c("beta")
+sumchain9  = mcmc(res9$sum)
+varnames(sumchain9)<-c("sum")
+
+```
+
+###mu 
+
+```{r}
+summary(muchain9)
+batchSE(muchain9)
+effectiveSize(muchain9)
+rejectionRate(muchain9)
+
+plot(muchain9)
+par(mfrow=c(3,3))
+autocorr.plot(muchain9,auto.layout=FALSE)
+
+crosscorr.plot(muchain9)
+
+```
+
+
+### sigma
+
+```{r}
+summary(sigmachain9)
+batchSE(sigmachain9)
+effectiveSize(sigmachain9)
+
+plot(sigmachain9)
+
+par(mfrow=c(3,3))
+autocorr.plot(sigmachain9,auto.layout=FALSE)
+```
+
+### sum
+
+```{r}
+summary(sumchain9)
+batchSE(sumchain9)
+effectiveSize(sumchain9)
+
+plot(sumchain9)
+
+autocorr.plot(sumchain9)
+```
+
+### beta
+
+```{r}
+summary(betachain9)
+batchSE(betachain9)
+effectiveSize(betachain9)
+
+plot(betachain9)
+
+autocorr.plot(betachain9)
+```
+
+```{r}
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(clustering9, border=NA,asp = TRUE,col = topo.colors(q))
+```
+
+the clustering kind of works
+
+## plot
+
+```{r}
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(clustering9, border=NA,asp = TRUE, col = topo.colors(q))
+# same problem as before since the beta is above beta critic
+```
+
+```{r}
+print(table(res9$e))
+```
+
+## removing the constriant on beta
+
+```{r,  results='hide'}
+priors9b <- priors9
+priors9b$beta <- c(0,2*betacritic9)
+
+res9b <- mcmcPotts(pcascore1, neigh, block, priors9b, mh9, 10000, 5000)
+
+clustering9b <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clustering9b[pixels[i,1],pixels[i,2]] = res9b$e[i]
+}
+```
+
+## chain analysis
+
+```{r}
+muchain9b = mcmc(res9b$mu)
+varnames(muchain9b)<-c("mu_1","mu_2","mu_3","mu_4","mu_5","mu_6","mu_7","mu_8","mu_9")
+sigmachain9b = mcmc(res9b$sigma)
+varnames(sigmachain9b)<-c("sigma_1","sigma_2","sigma_3","sigma_4","sigma_5","sigma_6","sigma_7","sigma_8","sigma_9")
+betachain9b = mcmc(res9b$beta)
+varnames(betachain9b)<-c("beta")
+sumchain9b  = mcmc(res9b$sum)
+varnames(sumchain9b)<-c("sum")
+```
+
+### mu
+```{r}
+summary(muchain9b)
+batchSE(muchain9b)
+
+effectiveSize(muchain9b)
+rejectionRate(muchain9b)
+par(mfrow=c(3,3))
+plot(muchain9b)
+
+autocorr.plot(muchain9b,auto.layout=FALSE)
+
+crosscorr.plot(muchain9b)
+# there are weird jumps int he chain i don't know why
+
+```
+
+### sigma
+
+```{r}
+summary(sigmachain9b)
+batchSE(sigmachain9b)
+effectiveSize(sigmachain9b)
+plot(sigmachain9b)
+
+par(mfrow=c(3,3))
+autocorr.plot(sigmachain9b,auto.layout=FALSE)
+```
+
+
+### sum
+```{r}
+summary(sumchain9b)
+batchSE(sumchain9b)
+effectiveSize(sumchain9b)
+
+plot(sumchain9b)
+
+autocorr.plot(sumchain9b)
+```
+
+this chain has a lot of problems
+
+### beta
+```{r}
+summary(betachain9b)
+batchSE(betachain9b)
+effectiveSize(betachain9b)
+
+plot(betachain9b)
+
+autocorr.plot(betachain9b)
+```
+we don't have the problem of rejecting like in the other chain
+beta also in this case goes to arround 
+
+## plot
+
+```{r}
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(clustering9b, border=NA,asp = TRUE, col = topo.colors(q))
+# same problem as before since the beta is above beta critic
+```
+
+same problem as before since the beta is above beta critic
+
+```{r}
+print(table(clustering9b))
+```
+

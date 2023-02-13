@@ -1,0 +1,126 @@
+---
+title: "investigation of missing data"
+author: Simone Colombara, Alessia Cotroneo, Francesco De Caro, Riccardo Morandi, Chiara   Schembri,
+  Alfredo Zapiola
+date: "2022-11-27"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.width = 8,fig.height = 6)
+library(tidyverse)
+library(rayshader)
+library(patchwork)
+library(viridis)
+library(plot.matrix)
+```
+
+lipidi
+```{r}
+L = read.table("/Users/macbookpro/Documents/Bayesian Statistics/Project/Raw_data/LIPIDI/78 variabili/101_lipidi-PreProcessed-IM-Step1-Step2-Step4-Step5-101.txt")
+sum(is.na(L))
+Lpixels = read.table("/Users/macbookpro/Documents/Bayesian Statistics/Project/Raw_data/LIPIDI/78 variabili/101_lipidi-PreProcessed-XYCoordinates-Step1-Step2-Step4-Step5-101.txt")
+Lmax_n_of_pixel = c(157,178)
+```
+
+Glicani
+```{r}
+G = read.table("/Users/macbookpro/Documents/Bayesian Statistics/Project/Raw_data/Glicani/85 variabili/101_glicani-PreProcessed-IM-Step1-Step2-Step4-Step5-101.txt")
+sum(is.na(G))
+Gpixels = read.table("/Users/macbookpro/Documents/Bayesian Statistics/Project/Raw_data/Glicani/85 variabili/101_glicani-PreProcessed-XYCoordinates-Step1-Step2-Step4-Step5-101.txt")
+Gmax_n_of_pixel = read.table("/Users/macbookpro/Documents/Bayesian Statistics/Project/Raw_data/Glicani/85 variabili/101_glicani-PreProcessed-maxXY-Step1-Step2-Step4-Step5-101.txt")
+```
+
+Peptidi
+```{r}
+P = read.table("/Users/macbookpro/Documents/Bayesian Statistics/Project/Raw_data/Peptidi/154 variabili/101_peptidi-PreProcessed-IM-Step1-Step2-Step4-Step5-101.txt")
+sum(is.na(G))
+Ppixels = read.table("/Users/macbookpro/Documents/Bayesian Statistics/Project/Raw_data/Peptidi/154 variabili/101_peptidi-PreProcessed-XYCoordinates-Step1-Step2-Step4-Step5-101.txt")
+Pmax_n_of_pixel = read.table("/Users/macbookpro/Documents/Bayesian Statistics/Project/Raw_data/Peptidi/154 variabili/101_peptidi-PreProcessed-maxXY-Step1-Step2-Step4-Step5-101.txt")
+```
+
+```{r}
+locLipidi <-matrix(0,Lmax_n_of_pixel[1],Lmax_n_of_pixel[2])
+for(i in 1:dim(Lpixels)[1]){
+  locLipidi[Lpixels[i,1],Lpixels[i,2]] = 1
+}
+
+locGlicani <-matrix(0,Gmax_n_of_pixel$maxx,Gmax_n_of_pixel$maxy)
+for(i in 1:dim(Gpixels)[1]){
+  locGlicani[Gpixels[i,1],Gpixels[i,2]] = 1
+}
+
+locPeptidi <-matrix(0,Pmax_n_of_pixel$maxx,Pmax_n_of_pixel$maxy)
+for(i in 1:dim(Lpixels)[1]){
+  locPeptidi[Ppixels[i,1],Ppixels[i,2]] = 1
+}
+
+par(mfrow=c(1,3))
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(locLipidi, border=NA,asp = TRUE,col = magma,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+plot(locGlicani, border=NA,asp = TRUE,col = magma,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+plot(locPeptidi, border=NA,asp = TRUE,col = magma,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```
+
+let us investigate if we have pointts that are for which we dot have information on all three tyoes of moleculess 
+
+```{r}
+obs <-matrix(0,Lmax_n_of_pixel[1],Lmax_n_of_pixel[2])
+for(i in 1:dim(Lpixels)[1]){
+  obs[Lpixels[i,1],Lpixels[i,2]] = obs[Lpixels[i,1],Lpixels[i,2]] + 1
+}
+
+
+for(i in 1:dim(Gpixels)[1]){
+  obs[Gpixels[i,1],Gpixels[i,2]] = obs[Gpixels[i,1],Gpixels[i,2]] + 1
+}
+
+
+for(i in 1:dim(Lpixels)[1]){
+  obs[Ppixels[i,1],Ppixels[i,2]] =obs[Ppixels[i,1],Ppixels[i,2]] + 1
+}
+
+
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(obs, border=NA,asp = TRUE,col = magma,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+
+```
+
+```{r}
+print(table(obs))
+```
+
+we have problems o the edges where we don't have al of the observations for the data
+
+```{r}
+noobs <- matrix(0,Lmax_n_of_pixel[1],Lmax_n_of_pixel[2])
+oneobs <-matrix(0,Lmax_n_of_pixel[1],Lmax_n_of_pixel[2])
+twoobs <-matrix(0,Lmax_n_of_pixel[1],Lmax_n_of_pixel[2])
+threeobs <-matrix(0,Lmax_n_of_pixel[1],Lmax_n_of_pixel[2])
+
+for(i in 1:Lmax_n_of_pixel[1]){
+  for(j in 1:Lmax_n_of_pixel[2]){
+    if(obs[i,j]==0){
+      noobs[i,j] = 1;
+    }
+    if(obs[i,j]==1){
+      oneobs[i,j] = 1;
+    }
+    if(obs[i,j]==2){
+      twoobs[i,j] = 1;
+    }
+    if(obs[i,j]==3){
+      threeobs[i,j] = 1;
+    }
+  }
+}
+
+
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(noobs, border=NA,asp = TRUE,col = c("white","red"),axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+plot(oneobs, border=NA,asp = TRUE,col = c("white","green"),axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+plot(twoobs, border=NA,asp = TRUE,col = c("white","blue"),axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+plot(threeobs, border=NA,asp = TRUE,col = c("white","red"),axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+
+```
+

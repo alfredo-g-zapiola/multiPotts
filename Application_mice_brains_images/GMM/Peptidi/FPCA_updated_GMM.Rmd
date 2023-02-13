@@ -1,0 +1,118 @@
+---
+title: "GMM"
+output: html_document
+date: "2022-12-04"
+---
+
+```{r libraries, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+
+library(rayshader)
+library(patchwork)
+library(plot.matrix)
+library(bayesImageS)
+library(stats)
+library(viridis)
+library(fda)
+```
+
+importing data as usual
+
+```{r}
+D = read.table("C:/Users/Francesco/OneDrive - Politecnico di Milano/Desktop/154 variabili/101_peptidi-PreProcessed-IM-Step1-Step2-Step4-Step5-101.txt")
+D0 = D
+D0[is.na(D0)] = 0
+
+pixels = read.table("C:/Users/Francesco/OneDrive - Politecnico di Milano/Desktop/154 variabili/101_peptidi-PreProcessed-XYCoordinates-Step1-Step2-Step4-Step5-101.txt")
+colnames(pixels) = c("x","y")
+Data_long = as_tibble(data.frame( pixels, D0 ))
+max_number_of_pixels = apply(Data_long[,1:2],2,max)
+Data_array = matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+
+Data_array = array(NA,c(max_number_of_pixels[1],max_number_of_pixels[2],ncol(D0)))
+
+sum(is.na(D0))
+
+head(Data_long)
+
+for(k in 1:ncol(D0)){
+  for(i in 1:nrow(Data_long)){
+    Data_array[Data_long$x[i],Data_long$y[i],k] = D0[i,k]
+  }
+}
+
+
+Data_very_long = reshape2::melt(Data_long,c("x","y")) %>% mutate(pixel_ind = paste0(x,"_",y), value_ind = rep(1:nrow(Data_long),ncol(D0)))
+
+Data_very_long = Data_very_long %>% group_by(pixel_ind) %>% mutate(n = row_number()) %>% ungroup() %>% mutate(mz = as.integer(substr(variable,2,16)))
+
+```
+
+##FPCA
+
+```{r}
+mz_values<-Data_very_long$mz
+mz_values<-unique(mz_values)
+mz_values<-append(mz_values,2521)
+mz_values<-append(mz_values,1069)
+mz_values<-append(mz_values,1085)
+length(mz_values)
+mz_values<-sort(mz_values)
+
+basis <- create.bspline.basis(rangeval=c(703,2521),breaks = mz_values[which(mz_values<1800)], norder=2)
+D1<-as.matrix(D0)
+D1<-t(D1)
+data_W.fd.1 <- Data2fd(y = D1,argvals = mz_values,basisobj = basis)
+plot.fd(data_W.fd.1,xlab='mz',ylab='value')
+
+#FPCA
+pca_W.1 <- pca.fd(data_W.fd.1,nharm=5,centerfns=TRUE)
+
+plot(pca_W.1$values[1:154],xlab='j',ylab='Eigenvalues')
+plot(cumsum(pca_W.1$values)[1:5]/sum(pca_W.1$values),xlab='j',ylab='CPV',ylim=c(0.5,1))
+
+# first two FPCs
+plot(pca_W.1$harmonics[1,],col=1,ylab='FPC1')
+abline(h=0,lty=2)
+plot(pca_W.1$harmonics[2,],col=2,ylab='FPC2')
+
+
+pcascore1vec = pca_W.1$scores[,1]
+par(mfrow=c(1,2))
+hist(pcascore1vec,main = "first pc score",breaks = 100)
+plot(density(pcascore1vec),main = "kernel density first pc score")
+
+max(pcascore1vec)
+min(pcascore1vec)
+mean(pcascore1vec)
+sd(pcascore1vec)
+```
+
+
+#k=3
+
+```{r}
+q <- 3
+
+priorsGMM3 <- list()
+priorsGMM3$k <- q
+priorsGMM3$lambda <- rep(1,q)
+priorsGMM3$mu <- c(-75,50,200)
+priorsGMM3$mu.sd <- rep(40,q)
+priorsGMM3$sigma <- rep(4,q)
+priorsGMM3$sigma.nu <- rep(0.05,q)
+
+resGMM3 <- gibbsGMM(pcascore1vec, niter = 5000, nburn = 2000, priors = priorsGMM3)
+
+clusteringGMM3 <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clusteringGMM3[pixels[i,1],pixels[i,2]] = which.max(resGMM3$alloc[i,])
+}
+print(table(clusteringGMM3))
+
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(clusteringGMM3, main='clustering K=3',border=NA,asp = TRUE,col =plasma,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```
+
+

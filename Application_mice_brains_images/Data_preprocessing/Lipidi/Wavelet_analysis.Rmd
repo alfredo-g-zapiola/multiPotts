@@ -1,0 +1,106 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+# install.packages("wavethresh")
+library(wavethresh)
+# install.packages("tidyverse")
+library(tidyverse)
+
+```
+Now load data
+```{r}
+
+D = read.table("./Raw_data/Lipidi/78 variabili/101_lipidi-PreProcessed-IM-Step1-Step2-Step4-Step5-101.txt")
+D0 = D
+D0[is.na(D0)] = 0
+
+pixels = read.table("./Raw_data/Lipidi/78 variabili/101_lipidi-PreProcessed-XYCoordinates-Step1-Step2-Step4-Step5-101.txt")
+colnames(D0) = substr(colnames(D0),1,4)
+colnames(pixels) = c("x","y")
+
+Data_long = as_tibble(data.frame( pixels, D0 ))
+max_number_of_pixels = apply(Data_long[,1:2],2,max)
+
+Data_very_long = reshape2::melt(Data_long,c("x","y")) %>% mutate(pixel_ind = paste0(x,"_",y), value_ind = rep(1:nrow(Data_long),ncol(D0)))
+Data_very_long = Data_very_long %>% group_by(pixel_ind) %>% mutate(n = row_number()) %>% ungroup() %>% mutate(mz = as.numeric(substr(variable,2,4)))
+```
+
+Now start with the analysis
+```{r}
+mz_values<-as.numeric(substr(Data_very_long$variable,2,4))
+mz_values<-unique(mz_values)
+domain <- c(min(mz_values), max(mz_values))
+
+D1<-as.matrix(D0)
+D1<-t(D1)
+
+```
+
+
+```{r}
+# install.packages("fdapace")
+library(KernSmooth)
+
+# get the bandwith
+h.opt <- dpill(mz_values, D1[,1])
+# local linear density estimate
+est <- locpoly(x=mz_values, bandwidth = h.opt, y = D1[,1],
+               gridsize = 2**7)
+
+plot(est$x, est$y, type = "l")
+points(mz_values, D1[,1])
+
+
+```
+I am not pleased by the "optimal" kernel estiamte.
+```{r}
+est <- locpoly(x=mz_values, bandwidth = 4, y = D1[,2],
+               gridsize = 2**7)
+
+plot(est$x, est$y, type = "l")
+points(mz_values, D1[,1])
+```
+It seems a rough approximation.
+We could explore just having the value of the two closest points but let us leave it like this.
+We know try wavelet transform for a single curve
+```{r}
+wave <- wd(est$y)
+plot(wave)
+wave.thr <- Cthreshold(wave, value = 1e-2)
+plot(wave.thr)
+wave.thr$D
+```
+
+```{r}
+df.wavelet <- data.frame(matrix(nrow=ncol(D1),
+                                ncol=length(wave.thr$D)))
+library(progress)
+pb <- progress_bar$new(total = nrow(df.wavelet),
+                       format = " downloading [:bar] :percent eta: :eta", clear = FALSE, width= 60)
+
+for (p in 1:nrow(df.wavelet)){
+  est <- locpoly(x=mz_values, bandwidth = 5, y = D1[,p],
+               gridsize = 2**7)
+  wave <- wd(est$y)
+  df.wavelet[p,] <- wave.thr$D
+  pb$tick()
+  }
+
+```
+Now principal component analysis
+```{r}
+pca.wave <- princomp(df.wavelet)
+plot(pca.wave$sdev)
+```
+
+
+```{r}
+pca.wave$scores[,1]
+```
+
+
+
+

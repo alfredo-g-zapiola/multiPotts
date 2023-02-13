@@ -1,0 +1,123 @@
+---
+title: "First_GMM"
+output: html_document
+date: "2022-12-04"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Creating the Dataset
+```{r}
+library(tidyverse)
+library(rayshader)
+library(patchwork)
+library(plot.matrix)
+library(bayesImageS)
+library(stats)
+
+
+D = read.table("C:/Users/simo9/Desktop/bayes proj/Glicani/85 variabili-20221203T074516Z-001/85 variabili/101_glicani-PreProcessed-IM-Step1-Step2-Step4-Step5-101.txt")
+D0 = D
+D0[is.na(D0)] = 0
+
+pixels = read.table("C:/Users/simo9/Desktop/bayes proj/Glicani/85 variabili-20221203T074516Z-001/85 variabili/101_glicani-PreProcessed-XYCoordinates-Step1-Step2-Step4-Step5-101.txt")
+colnames(D0) = substr(colnames(D0),1,5)
+colnames(pixels) = c("x","y")
+
+Data_long = as_tibble(data.frame( pixels, D0 ))
+max_number_of_pixels = apply(Data_long[,1:2],2,max)
+
+Data_very_long = reshape2::melt(Data_long,c("x","y")) %>% mutate(pixel_ind = paste0(x,"_",y), value_ind = rep(1:nrow(Data_long),ncol(D0)))
+
+detach("package:dplyr", unload = TRUE)
+library(dplyr)
+
+Data_very_long = Data_very_long %>% group_by(pixel_ind) %>% mutate(n = row_number()) %>% ungroup() %>% mutate(mz = as.numeric(substr(variable,2,4)))
+
+
+```
+
+## CONVENTIONAL PCA ON VECTOR DATA TO BE UPDATED ONCE WE FIX FPCA
+```{r}
+pca = princomp(D0)
+pcascore1vec = pca$scores[,1]
+max(pcascore1vec)
+min(pcascore1vec)
+mean(pcascore1vec)
+sd(pcascore1vec)
+library(viridis)
+
+par(mfrow=c(1,2))
+hist(pcascore1vec,main = "first pc score",breaks = 100)
+plot(density(pcascore1vec),main = "kernel density first pc score")
+
+
+pca$sdev[1]^2 / sum(pca$sdev^2)
+summary(pca)
+#the explained variance of the first pc is only 60%, lets try fpca
+```
+
+## FPCA
+```{r}
+library(fda)
+mz_values<-as.numeric(substr(Data_very_long$variable,2,7))
+mz_values<-unique(mz_values)
+basis <- create.bspline.basis(rangeval=c(min(mz_values),max(mz_values)),breaks=mz_values, norder = 2)
+D1<-as.matrix(D0)
+D1<-t(D1)
+data_W.fd.1 <- Data2fd(argvals = mz_values,y = D1,basisobj = basis)
+plot.fd(data_W.fd.1,xlab='mz',ylab='value')
+
+
+
+pca_W.1 <- pca.fd(data_W.fd.1,nharm=5,centerfns=TRUE)
+
+plot(pca_W.1$values[1:5],xlab='j',ylab='Eigenvalues')
+plot(cumsum(pca_W.1$values)[1:5]/sum(pca_W.1$values),xlab='j',ylab='CPV',ylim=c(0.5,1))
+
+
+par(mfrow=c(1,2))
+hist(pca_W.1$scores[,1],main = "first pc score",breaks = 100)
+plot(density(pca_W.1$scores[,1]),main = "kernel density first pc score")
+# clearly 2 gaussians would be enough
+
+pcascore1vec = pca_W.1$scores[,1]
+max(pcascore1vec)
+min(pcascore1vec)
+mean(pcascore1vec)
+sd(pcascore1vec)
+```
+NON informative priors
+the parameters are fixed basing on the plot of the distribution of the scores of the first fpc
+```{r}
+
+q <- 2
+
+priorsGMM2 <- list()
+priorsGMM2$k <- q
+priorsGMM2$lambda <-  rep(1,q)
+priorsGMM2$mu <- c(-30, 20) 
+priorsGMM2$mu.sd <- rep(10,q)
+priorsGMM2$sigma <- rep(40,q)
+priorsGMM2$sigma.nu <- rep(2,q)
+
+resGMM2 <- gibbsGMM(pcascore1vec, niter = 5000, nburn = 2000, priors = priorsGMM2)
+
+clusteringGMM2 <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clusteringGMM2[pixels[i,1],pixels[i,2]] = which.max(resGMM2$alloc[i,])
+}
+print(table(clusteringGMM2))
+
+plot(clusteringGMM2, border=NA,asp = TRUE,col= turbo,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+
+
+
+
+P1 = ggplot(Data_long)+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = pcascore1vec))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P1
+```

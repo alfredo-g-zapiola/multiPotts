@@ -1,0 +1,440 @@
+---
+title: "Data_Inspection"
+author: "Riccardo Morandi"
+date: "2022-10-19"
+output: html_document
+---
+```{r libraries}
+knitr::opts_chunk$set(fig.width = 8,fig.height = 6)
+library(tidyverse)
+library(rayshader)
+library(patchwork)
+library(skimr)
+library(visdat)
+library(ggplot2)
+library(GGally)
+library(corrplot)
+```
+
+# A first inspection of the dataset with 78 variables
+
+## importing the data
+
+
+
+
+```{r, read data}
+D = read.table("/Users/macbookpro/Documents/Bayesian Statistics/Project/Raw_data/LIPIDI/78 variabili/101_lipidi-PreProcessed-IM-Step1-Step2-Step4-Step5-101.txt")
+sum(is.na(D))
+```
+ the numbers of na is substantial
+```{r }
+ vis_miss(D,warn_large_data = FALSE)
+```
+the missing data is about 45% 
+ 
+```{r}
+skim(D)
+```
+
+we observe that the missing data is not uniform in the mz, there are some values for which only 20 - 30% of the pixel have a value, and this tends to be small
+
+we replace the missing data with 0 since it means the data for that mz was under threshold
+
+```{r}
+D0 = D
+D0[is.na(D0)] = 0
+```
+
+# preliminary plotts
+look at the distribution and correlation of the data, beginning with similar mz
+probably ggpairs is  not the most efficient, did not change the labels 
+
+
+```{r, warning = FALSE}
+ggpairs(D,columns = 1:7)
+
+ggpairs(D,columns = 8:14)
+
+ggpairs(D,columns = 15:21)
+
+ggpairs(D,columns = 16:28)
+
+ggpairs(D,columns = 28:35)
+
+ggpairs(D,columns = 36:42)
+
+ggpairs(D,columns = 43:49)
+
+ggpairs(D,columns = 50:56)
+```
+
+we see a lot of correlation in the data especially below
+
+
+```{r, warning = FALSE}
+ggpairs(D,columns = 57:63)
+
+ggpairs(D,columns = 64:70)
+
+ggpairs(D,columns = 70:78)
+```
+
+* do the zeros added contribute a lot to the correlation?
+
+* the peaks that we have around 800 mz are all correlated and are basically the same information
+* this high correlation explains the performance of pca
+
+# correlation matrix
+```{r}
+cm <- cor(D0)
+colnames(D0) = substr(colnames(D0),1,4)
+corrplot(cm, method = "color")
+```
+the blue blob is the observation from above
+
+```{r}
+pixels = read.table("/Users/macbookpro/Documents/Bayesian Statistics/Project/Raw_data/LIPIDI/78 variabili/101_lipidi-PreProcessed-XYCoordinates-Step1-Step2-Step4-Step5-101.txt")
+colnames(D0) = substr(colnames(D0),1,4)
+colnames(pixels) = c("x","y")
+```
+
+Create the datasets we will need:
+
+- `Data_long`: contains the 18k pixels on the rows. The first two columns are the coordinates, the remaining 78 are the values recorded for different `m.z`.
+
+- `Data_array`: contains a cube with the 78 slices on the third dimension. Not all the pixels are recored in each rectangle: beware of `NA`'s.
+
+
+
+```{r}
+Data_long            = as_tibble(data.frame( pixels, D0 ))
+max_number_of_pixels = apply(Data_long[,1:2],2,max)
+
+Data_array = matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+
+Data_array = array(NA,c(max_number_of_pixels[1],max_number_of_pixels[2],ncol(D0)))
+
+sum(is.na(D0))
+
+# there must be a better way to do this, but it's sunday morning, please be patient...
+for(k in 1:ncol(D0)){
+  for(i in 1:nrow(Data_long)){
+  Data_array[Data_long$x[i],Data_long$y[i],k] = D0[i,k]
+  }
+}
+
+dim(Data_array)
+
+Data_very_long = reshape2::melt(Data_long,c("x","y")) %>% mutate(pixel_ind = paste0(x,"_",y), value_ind = rep(1:nrow(Data_long),ncol(D0)))
+Data_very_long = Data_very_long %>% group_by(pixel_ind) %>% mutate(n = row_number()) %>% ungroup() %>% mutate(mz = as.numeric(substr(variable,2,4)))
+
+```
+
+
+```{r}
+Data_very_long = reshape2::melt(Data_long,c("x","y")) %>% mutate(pixel_ind = paste0(x,"_",y), value_ind = rep(1:nrow(Data_long),ncol(D0)))
+
+Data_very_long = Data_very_long %>% group_by(pixel_ind) %>% mutate(n = row_number()) %>% ungroup() %>% mutate(mz = as.numeric(substr(variable,2,4)))
+
+
+# subsampling to get a faster plot and not drain memory
+sub_ind = sample(unique(Data_very_long$pixel_ind),100)
+# just to get the gist:
+ggplot(Data_very_long %>% filter(pixel_ind %in% sub_ind))+
+  geom_path(aes(x = mz, y = value, 
+                col=pixel_ind, 
+                group = pixel_ind),alpha=.5)+theme_bw()+theme(legend.position = "none")+xlab("m.z")+scale_color_viridis_d(option = "A")+
+  scale_x_continuous(n.breaks = 20)
+```
+
+# investigating the different peaks
+
+## the first mz don't contain a lot of info, quite noisy
+
+
+```{r, echo = FALSE}
+P1 = ggplot(Data_long)+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = X437))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P2 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X442))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P3 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X447))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P4 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X448))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P5 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X449))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P6 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X465))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P1+P2+P3+P4+P5+P6
+
+```
+
+
+# we investigate the spike arround 500
+
+```{r,echo = FALSE}
+P1 = ggplot(Data_long)+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = X497))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P2 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X506))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P3 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X511))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P4 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X513))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P5 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X524))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P6 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X525))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P1+P2+P3+P4+P5+P6
+```
+
+the spike is in mz 511 on the edge  
+- possible problem of the instrument on the edge of the brain 
+- outlier ?
+the rest is just noise
+
+# spike arround 775
+
+```{r, echo = FALSE}
+P1 = ggplot(Data_long)+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = X775))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P2 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X775))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P3 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X778))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P4 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X779))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P5 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X780))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P6 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X793))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P1+P2+P3+P4+P5+P6
+```
+
+
+the spike is relative to 778 779 780
+
+# spike arround 800 and 825
+
+```{r, echo = FALSE}
+P1 = ggplot(Data_long)+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = X806))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P2 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X807))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P3 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X808))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P4 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X822))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P5 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X823))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P6 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X836))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P1+P2+P3+P4+P5+P6
+```
+
+very similar to each other
+
+# after 850
+
+```{r, echo = FALSE}
+P1 = ggplot(Data_long)+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = X862))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P2 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X863))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P3 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X888))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P4 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X889))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P5 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X890))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P6 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X904))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P1+P2+P3+P4+P5+P6
+```
+
+this are all the same, it is the high correlated blob in the correlation matrix
+
+# there is another peak around 900
+```{r,echo = FALSE}
+P1 = ggplot(Data_long)+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = X904))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P2 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X906))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P3 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X907))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P4 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X908))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P5 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X933))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P6 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X934))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P1+P2+P3+P4+P5+P6
+```
+
+the peak is in 906 907 908 which are very similar
+
+the rest is not that itresting, very low values resamble kind on veramble the previuus structure but basically noise
+
+# A comprehensive look at the peaks
+
+```{r, echo = FALSE}
+
+P1 = ggplot(Data_long)+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = X511))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P2 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X778))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P3 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X807))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P4 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X888))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P5 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X890))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+P6 = ggplot(Data_long)+
+  geom_tile(aes(x=x,y=y,fill = X906))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+P1+P2+P3+P4+P5+P6
+
+```
+
+
+# exept for the 511 which is in the edge, the peaks are all correlarend and therefore are all the same information
+
+# PCA
+
+```{r}
+pca = princomp(D0)
+plot(pca)
+summary(pca)
+```
+the pca works well because of the correlation
+
+```{r}
+
+
+PCA1 = ggplot(Data_long %>% mutate(pca1 = pca$scores[,1]))+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = pca1))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+PCA2 = ggplot(Data_long %>% mutate(pca2 = pca$scores[,2]))+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = pca2))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+PCA1+PCA2
+```
+
+
+# Note: we are always using the same info 
+
+
+```{r, echo = FALSE}
+PCA1 + P6
+```
+
+if we invert the colormap
+
+```{r}
+PCA1v2 = ggplot(Data_long %>% mutate(pca1 = pca$scores[,1]))+ theme_bw()+
+  geom_tile(aes(x=x,y=y,fill = -1*pca1))+scale_fill_viridis_c(option = "A",na.value = "red")+
+  theme_void()+theme(legend.position = "bottom")
+
+PCA1v2 + P6
+```
+
+the data is clearly dominated by this peaks that are highly correlated  and spatially correlated as well
+
+# Plotting the principal components
+
+first component
+
+```{r,echo = FALSE}
+b1 = data.frame(pca$loadings[,1])
+b1$mz = unique(Data_very_long$mz)
+ggplot(b1)+ geom_path(aes(x = mz, y = -1*pca.loadings...1.))+theme_bw()+theme(legend.position = "none")+xlab("m.z")+scale_color_viridis_d(option = "A")+
+  scale_x_continuous(n.breaks = 20)
+```
+second component
+
+```{r,echo = FALSE}
+b2 = data.frame(pca$loadings[,2])
+b2$mz = unique(Data_very_long$mz)
+ggplot(b2)+ geom_path(aes(x = mz, y = pca.loadings...2.))+theme_bw()+theme(legend.position = "none")+xlab("m.z")+scale_color_viridis_d(option = "A")+
+  scale_x_continuous(n.breaks = 20)
+
+```
+
+
+# do we need to be smarter and explore the non dominant factors or is enough? 
+
+```{r}
+sessionInfo()
+```
+

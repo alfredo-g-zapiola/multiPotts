@@ -1,0 +1,266 @@
+---
+title: "Potts_Square_mask"
+output: html_document
+date: "2022-12-04"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Dataset
+```{r}
+library(tidyverse)
+library(patchwork)
+library(plot.matrix)
+library(bayesImageS)
+library(stats)
+library(viridis)
+
+D = read.table("C:/Users/simo9/Desktop/bayes proj/Glicani/85 variabili-20221203T074516Z-001/85 variabili/101_glicani-PreProcessed-IM-Step1-Step2-Step4-Step5-101.txt")
+D0 = D
+D0[is.na(D0)] = 0
+
+pixels = read.table("C:/Users/simo9/Desktop/bayes proj/Glicani/85 variabili-20221203T074516Z-001/85 variabili/101_glicani-PreProcessed-XYCoordinates-Step1-Step2-Step4-Step5-101.txt")
+colnames(D0) = substr(colnames(D0),1,5)
+colnames(pixels) = c("x","y")
+
+Data_long = as_tibble(data.frame( pixels, D0 ))
+max_number_of_pixels = apply(Data_long[,1:2],2,max)
+
+
+Data_very_long = reshape2::melt(Data_long,c("x","y")) %>% mutate(pixel_ind = paste0(x,"_",y), value_ind = rep(1:nrow(Data_long),ncol(D0)))
+
+detach("package:dplyr", unload = TRUE)
+library(dplyr)
+
+Data_very_long = Data_very_long %>% group_by(pixel_ind) %>% mutate(n = row_number()) %>% ungroup() %>% mutate(mz = as.numeric(substr(variable,2,4)))
+#FPCA
+
+library(fda)
+# first method 
+mz_values<-as.numeric(substr(Data_very_long$variable,2,7))
+mz_values<-unique(mz_values)
+basis <- create.bspline.basis(rangeval=c(min(mz_values),max(mz_values)),breaks=mz_values, norder = 2)
+D1<-as.matrix(D0)
+D1<-t(D1)
+data_W.fd.1 <- Data2fd(argvals = mz_values,y = D1,basisobj = basis)
+plot.fd(data_W.fd.1,xlab='mz',ylab='value')
+
+
+
+pca_W.1 <- pca.fd(data_W.fd.1,nharm=5,centerfns=TRUE)
+
+plot(pca_W.1$values[1:5],xlab='j',ylab='Eigenvalues')
+plot(cumsum(pca_W.1$values)[1:5]/sum(pca_W.1$values),xlab='j',ylab='CPV',ylim=c(0.5,1))
+
+
+par(mfrow=c(1,2))
+hist(pca_W.1$scores[,1],main = "first pc score",breaks = 100)
+plot(density(pca_W.1$scores[,1]),main = "kernel density first pc score")
+pcascore1 = pca_W.1$scores[,1]
+
+```
+## Mask
+
+```{r}
+square_mask <-matrix(1,max_number_of_pixels[2],max_number_of_pixels[2])
+mask <-matrix(0,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  mask[pixels[i,1],pixels[i,2]] = 1
+}
+
+mask_idx = 1
+pca_aux <-rep(200,max_number_of_pixels[2]*max_number_of_pixels[2])
+
+for(i in 1:max_number_of_pixels[1]){
+  for(j in 1:max_number_of_pixels[2]){
+    if(mask[i,j]==1){
+      pca_aux[10*178+(i-1)*max_number_of_pixels[2]+j] = pcascore1[mask_idx]
+      mask_idx = mask_idx+1
+    }
+  }
+}
+
+check <-matrix(NA,max_number_of_pixels[2],max_number_of_pixels[2])
+mask_idx = 1;
+for(i in 1:max_number_of_pixels[2]){
+  for(j in 1:max_number_of_pixels[2]){
+    check[i,j] = pca_aux[mask_idx]
+    mask_idx = mask_idx+1
+  }
+}
+
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(check, border=NA,asp = TRUE,col = viridis,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```
+
+
+## K = 2
+```{r}
+q <- 3
+betacritic = log(1 + sqrt(q))
+neigh <- getNeighbors(mask = square_mask, c(2,2,0,0))
+block <- getBlocks(mask = square_mask, 2)
+
+priors <- list()
+priors$k <- q
+priors$mu <- c(-30,20,200)
+priors$mu.sd <- c(rep(5,q-1),0.1)
+priors$sigma <- rep(10,q)
+priors$sigma.nu <- rep(1,q)
+priors$beta <- c(0,betacritic)
+
+mh <- list(algorithm="pseudolikelihood", bandwidth=1)
+```
+
+```{r include=FALSE}
+res <- mcmcPotts(pca_aux, neigh, block, priors, mh, 10000, 5000)
+```
+
+```{r}
+library(coda)
+muchain = mcmc(res$mu)
+varnames(muchain)<-c("mu_1","mu_2","mu_b")
+sigmachain = mcmc(res$sigma)
+varnames(sigmachain)<-c("sigma_1","sigma_2","sigma_b")
+betachain = mcmc(res$beta)
+varnames(betachain)<-c("beta")
+sumchain  = mcmc(res$sum)
+varnames(sumchain)<-c("sum")
+
+summary(muchain)
+
+batchSE(muchain)
+
+effectiveSize(muchain)
+
+rejectionRate(muchain)
+
+# still need to understand this since i am using adaptive mh alg
+par(mfrow=c(3,2))
+plot(muchain,auto.layout = FALSE)
+
+par(mfrow=c(2,2))
+autocorr.plot(muchain,auto.layout=FALSE)
+
+
+summary(sigmachain)
+# why does bg have so large sigma?
+batchSE(sigmachain)
+
+effectiveSize(sigmachain)
+
+par(mfrow=c(2,2))
+plot(sigmachain,auto.layout=FALSE)
+
+autocorr.plot(sigmachain,auto.layout=FALSE)
+
+summary(sumchain)
+
+effectiveSize(sumchain)
+plot(sumchain)
+
+autocorr.plot(sumchain)
+# needs thinning
+
+summary(betachain)
+effectiveSize(betachain)
+plot(betachain)
+autocorr.plot(betachain)
+
+clustering <-matrix(NA,max_number_of_pixels[2],max_number_of_pixels[2])
+for(i in 1:max_number_of_pixels[2]){
+  for(j in 1:max_number_of_pixels[2]){
+    clustering[i,j] = res$e[(i-1)*max_number_of_pixels[2]+j]
+  }
+}
+par(mfrow=c(1,1))
+plot(clustering, border=NA,asp = TRUE,col =viridis,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```
+
+## K = 5
+```{r}
+q <- 6
+betacritic = log(1 + sqrt(q))
+neigh <- getNeighbors(mask = square_mask, c(2,2,0,0))
+block <- getBlocks(mask = square_mask, 2)
+
+priors <- list()
+priors$k <- q
+priors$mu <- c(-30,20,0,0,0,200)
+priors$mu.sd <- c(rep(5,q-1),0.1)
+priors$sigma <- rep(3,q)
+priors$sigma.nu <- rep(1,q)
+priors$beta <- c(0,betacritic)
+
+mh <- list(algorithm="pseudolikelihood", bandwidth=1)
+```
+
+```{r include=FALSE}
+res <- mcmcPotts(pca_aux, neigh, block, priors, mh, 10000, 5000)
+```
+
+```{r}
+library(coda)
+muchain = mcmc(res$mu)
+varnames(muchain)<-c("mu_1","mu_2", "mu_3", "mu_4", "mu_5","mu_b")
+sigmachain = mcmc(res$sigma)
+varnames(sigmachain)<-c("sigma_1","sigma_2", "sigma_3", "sigma_4", "sigma_5","sigma_b")
+betachain = mcmc(res$beta)
+varnames(betachain)<-c("beta")
+sumchain  = mcmc(res$sum)
+varnames(sumchain)<-c("sum")
+
+summary(muchain)
+
+batchSE(muchain)
+
+effectiveSize(muchain)
+
+rejectionRate(muchain)
+
+# still need to understand this since i am using adaptive mh alg
+par(mfrow=c(3,2))
+plot(muchain,auto.layout = FALSE)
+
+par(mfrow=c(2,2))
+autocorr.plot(muchain,auto.layout=FALSE)
+
+
+summary(sigmachain)
+# why does bg have so large sigma?
+batchSE(sigmachain)
+
+effectiveSize(sigmachain)
+
+par(mfrow=c(2,2))
+plot(sigmachain,auto.layout=FALSE)
+
+autocorr.plot(sigmachain,auto.layout=FALSE)
+
+summary(sumchain)
+
+effectiveSize(sumchain)
+plot(sumchain)
+
+autocorr.plot(sumchain)
+# needs thinning
+
+summary(betachain)
+effectiveSize(betachain)
+plot(betachain)
+autocorr.plot(betachain)
+
+clustering <-matrix(NA,max_number_of_pixels[2],max_number_of_pixels[2])
+for(i in 1:max_number_of_pixels[2]){
+  for(j in 1:max_number_of_pixels[2]){
+    clustering[i,j] = res$e[(i-1)*max_number_of_pixels[2]+j]
+  }
+}
+
+par(mfrow=c(1,1))
+plot(clustering, border=NA,asp = TRUE,col =viridis,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```
+

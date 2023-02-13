@@ -1,0 +1,120 @@
+---
+title: "peptidi md data prep"
+author: Simone Colombara, Alessia Cotroneo, Francesco De Caro, Riccardo Morandi, Chiara   Schembri,
+  Alfredo Zapiola
+date: "2022-12-15"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.width = 8,fig.height = 6)
+library(tidyverse)
+library(rayshader)
+library(patchwork)
+library(skimr)
+library(visdat)
+library(ggplot2)
+library(GGally)
+library(corrplot)
+library(viridis)
+library(MASS)
+```
+
+##loading data
+
+```{r, read data}
+P = read.table("/Users/macbookpro/Documents/Bayesian Statistics/Project/Raw_data/Peptidi/154 variabili/101_peptidi-PreProcessed-IM-Step1-Step2-Step4-Step5-101.txt")
+P0 = P
+P0[is.na(P0)] = 0
+pixels = read.table("/Users/macbookpro/Documents/Bayesian Statistics/Project/Raw_data/Peptidi/154 variabili/101_peptidi-PreProcessed-XYCoordinates-Step1-Step2-Step4-Step5-101.txt")
+colnames(P0) = substr(colnames(P0),1,5)
+colnames(pixels) = c("x","y")
+max_n_of_pixel = read.table("/Users/macbookpro/Documents/Bayesian Statistics/Project/Raw_data/Peptidi/154 variabili/101_peptidi-PreProcessed-maxXY-Step1-Step2-Step4-Step5-101.txt")
+```
+
+## convenional pca on data
+
+```{r}
+pca = princomp(P0)
+plot(pca)
+summary(pca)
+```
+
+## 1d plots
+
+```{r}
+pcascore1vec = pca$scores[,1]
+max1 = max(pcascore1vec)
+min1 = min(pcascore1vec)
+sd1 = sd(pcascore1vec)
+
+max1
+min1
+sd1
+```
+
+```{r}
+par(mfrow=c(1,2))
+hist(pcascore1vec,main = "first pc score",breaks = 100)
+plot(density(pcascore1vec),main = "kernel density first pc score")
+```
+
+```{r}
+pcascore2vec = pca$scores[,2]
+max2 = max(pcascore2vec)
+min2 = min(pcascore2vec)
+sd2 = sd(pcascore2vec)
+
+max2
+min2
+sd2
+
+```
+
+```{r}
+par(mfrow=c(1,2))
+hist(pcascore2vec,main = "second pc score",breaks = 100)
+plot(density(pcascore2vec),main = "kernel density second pc score")
+```
+
+```{r}
+pcascore3vec = pca$scores[,3]
+max3 = max(pcascore3vec)
+min3 = min(pcascore3vec)
+sd3 = sd(pcascore3vec)
+
+max3
+min3
+sd3
+
+```
+
+```{r}
+par(mfrow=c(1,2))
+hist(pcascore3vec,main = "second pc score",breaks = 100)
+plot(density(pcascore3vec),main = "kernel density second pc score")
+```
+
+## 2d plots
+
+```{r}
+plot(pcascore1vec,pcascore2vec)
+est12 = kde2d(pcascore1vec, pcascore2vec,  n = 100)
+contour(est12,nlevels = 20,add = TRUE,col = hcl.colors(20, "Spectral"))
+```
+
+```{r}
+
+plot(pcascore1vec,pcascore3vec)
+est13 = kde2d(pcascore1vec, pcascore3vec,  n = 100)
+contour(est13,nlevels = 20,add = TRUE,col = hcl.colors(20, "Spectral"))
+```
+
+
+```{r}
+plot(pcascore2vec,pcascore3vec)
+est23 = kde2d(pcascore2vec, pcascore3vec,  n = 100)
+contour(est23,nlevels = 20,add = TRUE,col = hcl.colors(20, "Spectral"))
+```
+
+

@@ -1,0 +1,828 @@
+---
+title: "Multidimensional models Glicani dataset"
+author: Simone Colombara, Alessia Cotroneo, Francesco De Caro, Riccardo Morandi, Chiara   Schembri,
+  Alfredo Zapiola
+date: "2022-12-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.width = 6,fig.height = 4)
+library(tidyverse)
+library(rayshader)
+library(patchwork)
+library(viridis)
+library(plot.matrix)
+library(bayesImageS)
+library(stats)
+library(ggplot2)
+library(Rcpp)
+library(RcppArmadillo)
+library(coda)
+library(MASS)
+library(ellipse)
+library(plyr)
+library(ggExtra)
+```
+
+```{r, warning=FALSE}
+sourceCpp("/Users/macbookpro/Documents/Bayesian Statistics/Project/Cpp_code/GibbsGMM.cpp")
+sourceCpp("/Users/macbookpro/Documents/Bayesian Statistics/Project/Cpp_code/GibbsSampler_parallel.cpp")
+sourceCpp("/Users/macbookpro/Documents/Bayesian Statistics/Project/Cpp_code/mcmcPotts.cpp")
+```
+
+##loading data
+
+```{r}
+G = read.table("/Users/macbookpro/Documents/Bayesian Statistics/Project/Raw_data/Glicani/85 variabili/101_glicani-PreProcessed-IM-Step1-Step2-Step4-Step5-101.txt")
+G0 = G
+G0[is.na(G0)] = 0
+pixels = read.table("/Users/macbookpro/Documents/Bayesian Statistics/Project/Raw_data/Glicani/85 variabili/101_glicani-PreProcessed-XYCoordinates-Step1-Step2-Step4-Step5-101.txt")
+colnames(G0) = substr(colnames(G0),1,4)
+colnames(pixels) = c("x","y")
+max_number_of_pixels = c(max(pixels[,1]),max(pixels[,2]))
+```
+
+## convenional pca on data
+
+```{r}
+pca = princomp(G0)
+plot(pca)
+summary(pca)
+```
+
+we will use d = 4 since this will allow us to get 96% of explained variance
+
+### single components plot
+
+```{r}
+df <- data.frame("pca1" = pca$scores[,1], "pca2" = pca$scores[,2], "pca3" = pca$scores[,3], "pca4" = pca$scores[,4], "x" = pixels$x, 
+                 "y" = pixels$y)
+data = rbind(pca$scores[,1],pca$scores[,2],pca$scores[,3],pca$scores[,4])
+P1 = ggplot(data = df, aes(x = pca1,after_stat(density))) + geom_histogram(bins = 75, alpha = 0.7) + 
+  geom_density(color = "red",linewidth = 0.75)
+P2 = ggplot(data = df, aes(x = pca2,after_stat(density))) + geom_histogram(bins = 75, alpha = 0.7) + 
+  geom_density(color = "blue",linewidth = 0.75)
+P3 = ggplot(data = df, aes(x = pca3,after_stat(density))) + geom_histogram(bins = 75, alpha = 0.7) + 
+  geom_density(color = "green",linewidth = 0.75)
+P4 = ggplot(data = df, aes(x = pca4,after_stat(density))) + geom_histogram(bins = 75, alpha = 0.7) + 
+  geom_density(color = "orange",linewidth = 0.75)
+P1 + P2 + P3 + P4
+```
+
+```{r}
+PCA1 = ggplot(df) + geom_tile(aes(x=x,y=y,fill = pca1)) + scale_fill_viridis_c(option = "H") + theme_void() +
+ theme(legend.position = "bottom") 
+
+PCA2 = ggplot(df) + geom_tile(aes(x=x,y=y,fill = pca2)) + scale_fill_viridis_c(option = "H") + theme_void() +
+ theme(legend.position = "bottom") 
+
+PCA3 = ggplot(df) + geom_tile(aes(x=x,y=y,fill = pca3)) + scale_fill_viridis_c(option = "H") + theme_void() +
+ theme(legend.position = "bottom") 
+
+PCA4 = ggplot(df) + geom_tile(aes(x=x,y=y,fill = pca4)) + scale_fill_viridis_c(option = "H") + theme_void() +
+ theme(legend.position = "bottom") 
+
+PCA1 + PCA2 + PCA3 + PCA4
+```
+
+### multiple components plot
+
+```{r}
+G12 = ggplot(data = df,aes(x = pca1,y = pca2)) + geom_point(alpha = 0.1) + geom_density_2d(bins = 10) 
+G13 = ggplot(data = df,aes(x = pca1,y = pca3)) + geom_point(alpha = 0.1) + geom_density_2d(bins = 10) 
+G14 = ggplot(data = df,aes(x = pca1,y = pca4)) + geom_point(alpha = 0.1) + geom_density_2d(bins = 10) 
+G23 = ggplot(data = df,aes(x = pca2,y = pca3)) + geom_point(alpha = 0.1) + geom_density_2d(bins = 10)
+G24 = ggplot(data = df,aes(x = pca2,y = pca4)) + geom_point(alpha = 0.1) + geom_density_2d(bins = 10) 
+G34 = ggplot(data = df,aes(x = pca3,y = pca4)) + geom_point(alpha = 0.1) + geom_density_2d(bins = 10) 
+
+(G12 | G23) / (G13 | G24) / (G14 | G34)
+
+```
+
+we see a large number of ellipses but only one or two of them have a considerable amount of points in them
+
+#GMM
+
+## K = 3
+
+we start performing a 4d GMM with non informative priors on the data
+
+```{r}
+k = 3
+d = 4
+B0 = diag(100,d,d)
+V0 = diag(10,d,d)
+n0 = 10
+
+priors <- list()
+priors$k <- k
+priors$mu <- matrix(0,d,k)
+priors$mu.sigma <- array(B0,dim = c(d,d,k))
+priors$sigma.V0 <- array(V0,dim = c(d,d,k))
+priors$sigma.n0 <- rep(n0,k)
+priors$lambda <- rep(1,k)
+```
+
+```{r}
+iter = 10000
+burnin = 5000
+```
+
+```{r}
+resGMM <- GibbsGMM(data,iter,burnin,priors)
+```
+
+```{r}
+allocationGMM = rep(0,dim(pixels)[1])
+for (i in 1:dim(pixels)[1]){
+  allocationGMM[i] = which.max(resGMM$alloc[i,])
+}
+df$allocGMM = allocationGMM
+```
+
+```{r}
+ggplot(df)+
+  geom_tile(aes(x=x,y=y,fill = as.factor(allocGMM))) + scale_fill_viridis_d(option = "D") +
+  theme_void() + theme(legend.position = "bottom") + labs(fill = "cluster")
+
+```
+
+let us plot the chains
+
+```{r}
+muchain = data.frame("mu" = c(resGMM$mu[1,1,], resGMM$mu[2,1,],resGMM$mu[3,1,], resGMM$mu[4,1,],resGMM$mu[1,2,], resGMM$mu[2,2,],
+                              resGMM$mu[3,2,], resGMM$mu[4,2,],resGMM$mu[1,3,], resGMM$mu[2,3,],resGMM$mu[3,3,], resGMM$mu[4,3,]),
+                     "index" = rep(seq(1,iter),d*k),"cluster" = c(rep(1,d*iter),rep(2,d*iter),rep(3,d*iter)), 
+                     "comp" = rep(c(rep(1,iter),rep(2,iter),rep(3,iter),rep(4,iter)),k))
+
+ggplot(data = muchain,aes(x = index,y = mu,color = as.factor(cluster))) + geom_line() + scale_colour_viridis_d(option = "D") + facet_wrap(~comp,scales = "free") + theme(legend.position = "bottom") + labs(color = "cluster")
+```
+
+let us calculate the MC estimates of the means
+
+```{r}
+mu1 = rowMeans(resGMM$mu[,1,(burnin +1):iter])
+mu2 = rowMeans(resGMM$mu[,2,(burnin +1):iter])
+mu3 = rowMeans(resGMM$mu[,3,(burnin +1):iter])
+
+mudf = data.frame("x" = c(mu1[1],mu2[1],mu3[1]),"y" = c(mu1[2],mu2[2],mu3[2]),"alloc" = c(1,2,3))
+```
+
+and for the covariance matrices
+
+```{r,echo=FALSE}
+
+sigma1chain = array(dim = c(d,d,iter))
+sigma2chain = array(dim = c(d,d,iter))
+sigma3chain = array(dim = c(d,d,iter))
+for(i in 1:iter){
+  sigma1chain[,,i] = resGMM$sigma[i][[1]][,,1]
+  sigma2chain[,,i] = resGMM$sigma[i][[1]][,,2]
+  sigma3chain[,,i] = resGMM$sigma[i][[1]][,,3]
+}
+
+sigma1 = apply(sigma1chain, c(1,2), mean)
+sigma2 = apply(sigma2chain, c(1,2), mean)
+sigma3 = apply(sigma3chain, c(1,2), mean)
+
+sigmachain = data.frame("sigma" = c(sigma1chain[1,1,], sigma1chain[1,2,],sigma1chain[1,3,], sigma1chain[1,4,],
+                                    sigma1chain[2,1,], sigma1chain[2,2,],sigma1chain[2,3,], sigma1chain[2,4,],
+                                    sigma1chain[3,1,], sigma1chain[3,2,],sigma1chain[3,3,], sigma1chain[4,4,],
+                                    sigma1chain[4,1,], sigma1chain[4,2,],sigma1chain[4,3,], sigma1chain[4,4,],
+                                    sigma2chain[1,1,], sigma2chain[1,2,],sigma2chain[1,3,], sigma2chain[1,4,],
+                                    sigma2chain[2,1,], sigma2chain[2,2,],sigma2chain[2,3,], sigma2chain[2,4,],
+                                    sigma2chain[3,1,], sigma2chain[3,2,],sigma2chain[3,3,], sigma2chain[4,4,],
+                                    sigma2chain[4,1,], sigma2chain[4,2,],sigma2chain[4,3,], sigma2chain[4,4,],
+                                    sigma3chain[1,1,], sigma3chain[1,2,],sigma3chain[1,3,], sigma3chain[1,4,],
+                                    sigma3chain[2,1,], sigma3chain[2,2,],sigma3chain[2,3,], sigma3chain[2,4,],
+                                    sigma3chain[3,1,], sigma3chain[3,2,],sigma3chain[3,3,], sigma3chain[4,4,],
+                                    sigma3chain[4,1,], sigma3chain[4,2,],sigma3chain[4,3,], sigma3chain[4,4,]),
+                        "index" = rep(seq(1,iter),d*d*k),
+                     "cluster" = c(rep(1,d*d*iter),rep(2,d*d*iter),rep(3,d*d*iter)), "comp" =
+                       rep(c(rep(11,iter),rep(12,iter),rep(13,iter),rep(14,iter),
+                             rep(21,iter),rep(22,iter),rep(23,iter),rep(24,iter),
+                             rep(31,iter),rep(32,iter),rep(33,iter),rep(34,iter),
+                             rep(41,iter),rep(42,iter),rep(43,iter),rep(44,iter)),k))
+
+```
+
+```{r}
+ggplot(data = sigmachain,aes(x = index,y = sigma,color = as.factor(cluster))) + geom_line() + scale_colour_viridis_d(option = "D") +
+  theme(legend.position = "bottom") + facet_wrap(~comp,scales = "free") + labs(color = "cluster")
+```
+
+we still need to plot the covariance autocorr functions
+
+```{r}
+wchain <- data.frame("w" = c(resGMM$w[,1],resGMM$w[,2],resGMM$w[,3]), "index" = rep(seq(1,iter),k), 
+                     "cluster" =c(rep(1,iter),rep(2,iter),rep(3,iter)))
+
+ggplot(data = wchain,aes(x = index,y = w,color = as.factor(cluster))) + geom_line() + scale_colour_viridis_d(option = "D")  +
+  theme(legend.position = "bottom") + labs(color = "cluster")
+```
+
+```{r}
+w = colMeans(resGMM$w[(burnin+1):iter,])
+```
+
+let's investigate the results:
+
+```{r}
+G12 = ggplot(data = df,aes(x = pca1,y = pca2,color = as.factor(allocGMM))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "D") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1) + labs(color = "cluster") + theme(legend.position = "none")
+
+G13 = ggplot(data = df,aes(x = pca1,y = pca3,color = as.factor(allocGMM))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "D") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1) +  labs(color = "cluster") + theme(legend.position = "none")
+
+G14 = ggplot(data = df,aes(x = pca1,y = pca4,color = as.factor(allocGMM))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "D") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1) + labs(color = "cluster") + theme(legend.position = "none")
+
+G23 = ggplot(data = df,aes(x = pca2,y = pca3,color = as.factor(allocGMM))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "D") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1) + labs(color = "cluster") + theme(legend.position = "none")
+
+G24 = ggplot(data = df,aes(x = pca2,y = pca4,color = as.factor(allocGMM))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "D") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1)  + labs(color = "cluster") + theme(legend.position = "none")
+
+G34 = ggplot(data = df,aes(x = pca3,y = pca4,color = as.factor(allocGMM))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "D") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1) + labs(color = "cluster") + theme(legend.position = "none")
+
+(G12 | G23) / (G13 | G24) / (G14 | G34)
+```
+
+```{r}
+G12 = ggplot(data = df,aes(x = pca1,y = pca2,color = as.factor(allocGMM))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "D") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1)  + facet_wrap(~as.factor(allocGMM),scales = "free") + 
+  labs(color = "cluster") + theme(legend.position = "none")
+
+G13 = ggplot(data = df,aes(x = pca1,y = pca3,color = as.factor(allocGMM))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "D") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1)  + facet_wrap(~as.factor(allocGMM),scales = "free") + 
+  labs(color = "cluster") + theme(legend.position = "none")
+
+G14 = ggplot(data = df,aes(x = pca1,y = pca4,color = as.factor(allocGMM))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "D") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1)  + facet_wrap(~as.factor(allocGMM),scales = "free") + 
+  labs(color = "cluster") + theme(legend.position = "none")
+
+G23 = ggplot(data = df,aes(x = pca2,y = pca3,color = as.factor(allocGMM))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "D") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1)  + facet_wrap(~as.factor(allocGMM),scales = "free") + 
+  labs(color = "cluster") + theme(legend.position = "none")
+
+G24 = ggplot(data = df,aes(x = pca2,y = pca4,color = as.factor(allocGMM))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "D") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1)  + facet_wrap(~as.factor(allocGMM),scales = "free") + 
+  labs(color = "cluster") + theme(legend.position = "none")
+
+G34 = ggplot(data = df,aes(x = pca3,y = pca4,color = as.factor(allocGMM))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "D") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1)  + facet_wrap(~as.factor(allocGMM),scales = "free") + 
+  labs(color = "cluster") + theme(legend.position = "none")
+
+(G12 | G23) / (G13 | G24) / (G14 | G34)
+```
+
+we need to increase the number of clusters to better explain the data
+let's see what happens
+
+## K = 4 
+
+```{r}
+k = 4
+d = 4
+B0 = diag(100,d,d)
+V0 = diag(10,d,d)
+n0 = 10
+
+priors <- list()
+priors$k <- k
+priors$mu <- matrix(0,d,k)
+priors$mu.sigma <- array(B0,dim = c(d,d,k))
+priors$sigma.V0 <- array(V0,dim = c(d,d,k))
+priors$sigma.n0 <- rep(n0,k)
+priors$lambda <- rep(1,k)
+```
+
+```{r}
+resGMM4 <- GibbsGMM(data,iter,burnin,priors)
+```
+
+```{r}
+allocationGMM4 = rep(0,dim(pixels)[1])
+for (i in 1:dim(pixels)[1]){
+  allocationGMM4[i] = which.max(resGMM4$alloc[i,])
+}
+df$allocGMM4 = allocationGMM4
+```
+
+```{r}
+ggplot(df)+
+  geom_tile(aes(x=x,y=y,fill = as.factor(allocGMM4))) + scale_fill_viridis_d(option = "H") +
+  theme_void() + theme(legend.position = "bottom") + labs(fill = "cluster")
+
+```
+
+```{r}
+print(table(df$allocGMM4))
+```
+
+
+let us plot the chains
+
+```{r}
+muchain = data.frame("mu" = c(resGMM4$mu[1,1,], resGMM4$mu[2,1,],resGMM4$mu[3,1,], resGMM4$mu[4,1,],resGMM4$mu[1,2,], resGMM4$mu[2,2,],
+                              resGMM4$mu[3,2,], resGMM4$mu[4,2,],resGMM4$mu[1,3,], resGMM4$mu[2,3,],resGMM4$mu[3,3,], resGMM4$mu[4,3,],
+                              resGMM4$mu[1,4,], resGMM4$mu[2,4,],resGMM4$mu[3,4,], resGMM4$mu[4,4,]),
+                     "index" = rep(seq(1,iter),d*k),"cluster" =
+                       c(rep(1,d*iter),rep(2,d*iter),rep(3,d*iter),rep(4,d*iter)), 
+                     "comp" = rep(c(rep(1,iter),rep(2,iter),rep(3,iter),rep(4,iter)),k))
+
+ggplot(data = muchain,aes(x = index,y = mu,color = as.factor(cluster))) + geom_line() + scale_colour_viridis_d(option = "H") + facet_wrap(~comp,scales = "free") + theme(legend.position = "bottom") + labs(color = "cluster")
+```
+
+```{r,echo=FALSE}
+
+sigma1chain = array(dim = c(d,d,iter))
+sigma2chain = array(dim = c(d,d,iter))
+sigma3chain = array(dim = c(d,d,iter))
+sigma4chain = array(dim = c(d,d,iter))
+
+for(i in 1:iter){
+  sigma1chain[,,i] = resGMM4$sigma[i][[1]][,,1]
+  sigma2chain[,,i] = resGMM4$sigma[i][[1]][,,2]
+  sigma3chain[,,i] = resGMM4$sigma[i][[1]][,,3]
+  sigma4chain[,,i] = resGMM4$sigma[i][[1]][,,4]
+}
+
+sigma1 = apply(sigma1chain, c(1,2), mean)
+sigma2 = apply(sigma2chain, c(1,2), mean)
+sigma3 = apply(sigma3chain, c(1,2), mean)
+sigma4 = apply(sigma4chain, c(1,2), mean)
+
+sigmachain = data.frame("sigma" = c(sigma1chain[1,1,], sigma1chain[1,2,],sigma1chain[1,3,], sigma1chain[1,4,],
+                                    sigma1chain[2,1,], sigma1chain[2,2,],sigma1chain[2,3,], sigma1chain[2,4,],
+                                    sigma1chain[3,1,], sigma1chain[3,2,],sigma1chain[3,3,], sigma1chain[4,4,],
+                                    sigma1chain[4,1,], sigma1chain[4,2,],sigma1chain[4,3,], sigma1chain[4,4,],
+                                    sigma2chain[1,1,], sigma2chain[1,2,],sigma2chain[1,3,], sigma2chain[1,4,],
+                                    sigma2chain[2,1,], sigma2chain[2,2,],sigma2chain[2,3,], sigma2chain[2,4,],
+                                    sigma2chain[3,1,], sigma2chain[3,2,],sigma2chain[3,3,], sigma2chain[4,4,],
+                                    sigma2chain[4,1,], sigma2chain[4,2,],sigma2chain[4,3,], sigma2chain[4,4,],
+                                    sigma3chain[1,1,], sigma3chain[1,2,],sigma3chain[1,3,], sigma3chain[1,4,],
+                                    sigma3chain[2,1,], sigma3chain[2,2,],sigma3chain[2,3,], sigma3chain[2,4,],
+                                    sigma3chain[3,1,], sigma3chain[3,2,],sigma3chain[3,3,], sigma3chain[4,4,],
+                                    sigma3chain[4,1,], sigma3chain[4,2,],sigma3chain[4,3,], sigma3chain[4,4,],
+                                    sigma4chain[1,1,], sigma4chain[1,2,],sigma4chain[1,3,], sigma4chain[1,4,],
+                                    sigma4chain[2,1,], sigma4chain[2,2,],sigma4chain[2,3,], sigma4chain[2,4,],
+                                    sigma4chain[3,1,], sigma4chain[3,2,],sigma4chain[3,3,], sigma4chain[4,4,],
+                                    sigma4chain[4,1,], sigma4chain[4,2,],sigma4chain[4,3,], sigma4chain[4,4,]),
+                        "index" = rep(seq(1,iter),d*d*k),
+                     "cluster" = c(rep(1,d*d*iter),rep(2,d*d*iter),rep(3,d*d*iter),rep(4,d*d*iter)), 
+                     "comp" =rep(c(rep(11,iter),rep(12,iter),rep(13,iter),rep(14,iter),
+                             rep(21,iter),rep(22,iter),rep(23,iter),rep(24,iter),
+                             rep(31,iter),rep(32,iter),rep(33,iter),rep(34,iter),
+                             rep(41,iter),rep(42,iter),rep(43,iter),rep(44,iter)),k))
+
+```
+
+```{r}
+ggplot(data = sigmachain,aes(x = index,y = sigma,color = as.factor(cluster))) + geom_line() + scale_colour_viridis_d(option = "H") +
+  theme(legend.position = "bottom") + facet_wrap(~comp,scales = "free") + labs(color = "cluster")
+```
+
+we still need to plot the covariance autocorr functions
+
+```{r}
+wchain <- data.frame("w" = c(resGMM4$w[,1],resGMM4$w[,2],resGMM4$w[,3],resGMM4$w[,4]), 
+                     "index" =rep(seq(1,iter),k), "cluster" =c(rep(1,iter),rep(2,iter),rep(3,iter),rep(4,iter)))
+
+ggplot(data = wchain,aes(x = index,y = w,color = as.factor(cluster))) + geom_line() + scale_colour_viridis_d(option = "H")  +
+  theme(legend.position = "bottom") + labs(color = "cluster")
+```
+
+```{r}
+w = colMeans(resGMM4$w[(burnin+1):iter,])
+```
+
+let's investigate the results:
+
+```{r}
+G12 = ggplot(data = df,aes(x = pca1,y = pca2,color = as.factor(allocGMM4))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "H") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1) + labs(color = "cluster") + theme(legend.position = "none")
+
+G13 = ggplot(data = df,aes(x = pca1,y = pca3,color = as.factor(allocGMM4))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "H") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1) +  labs(color = "cluster") + theme(legend.position = "none")
+
+G14 = ggplot(data = df,aes(x = pca1,y = pca4,color = as.factor(allocGMM4))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "H") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1) + labs(color = "cluster") + theme(legend.position = "none")
+
+G23 = ggplot(data = df,aes(x = pca2,y = pca3,color = as.factor(allocGMM4))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "H") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1) + labs(color = "cluster") + theme(legend.position = "none")
+
+G24 = ggplot(data = df,aes(x = pca2,y = pca4,color = as.factor(allocGMM4))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "H") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1)  + labs(color = "cluster") + theme(legend.position = "none")
+
+G34 = ggplot(data = df,aes(x = pca3,y = pca4,color = as.factor(allocGMM4))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "H") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1) + labs(color = "cluster") + theme(legend.position = "none")
+
+(G12 | G23) / (G13 | G24) / (G14 | G34)
+```
+
+
+
+```{r}
+G12 = ggplot(data = df,aes(x = pca1,y = pca2,color = as.factor(allocGMM4))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "H") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1)  + facet_wrap(~as.factor(allocGMM4),scales = "free") + 
+  labs(color = "cluster") + theme(legend.position = "none")
+
+G13 = ggplot(data = df,aes(x = pca1,y = pca3,color = as.factor(allocGMM4))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "H") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1)  + facet_wrap(~as.factor(allocGMM4),scales = "free") + 
+  labs(color = "cluster") + theme(legend.position = "none")
+
+G14 = ggplot(data = df,aes(x = pca1,y = pca4,color = as.factor(allocGMM4))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "H") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1)  + facet_wrap(~as.factor(allocGMM4),scales = "free") + 
+  labs(color = "cluster") + theme(legend.position = "none")
+
+G23 = ggplot(data = df,aes(x = pca2,y = pca3,color = as.factor(allocGMM4))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "H") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1)  + facet_wrap(~as.factor(allocGMM4),scales = "free") + 
+  labs(color = "cluster") + theme(legend.position = "none")
+
+G24 = ggplot(data = df,aes(x = pca2,y = pca4,color = as.factor(allocGMM4))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "H") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1)  + facet_wrap(~as.factor(allocGMM4),scales = "free") + 
+  labs(color = "cluster") + theme(legend.position = "none")
+
+G34 = ggplot(data = df,aes(x = pca3,y = pca4,color = as.factor(allocGMM4))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "H") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1)  + facet_wrap(~as.factor(allocGMM4),scales = "free") + 
+  labs(color = "cluster") + theme(legend.position = "none")
+
+G12 / G13
+```
+
+
+```{r}
+G23 / G24 
+```
+
+```{r}
+G14 / G34
+```
+
+## K = 6 
+
+```{r}
+k = 6
+d = 4
+B0 = diag(100,d,d)
+V0 = diag(10,d,d)
+n0 = 10
+
+priors <- list()
+priors$k <- k
+priors$mu <- matrix(0,d,k)
+priors$mu.sigma <- array(B0,dim = c(d,d,k))
+priors$sigma.V0 <- array(V0,dim = c(d,d,k))
+priors$sigma.n0 <- rep(n0,k)
+priors$lambda <- rep(1,k)
+```
+
+```{r}
+resGMM6 <- GibbsGMM(data,iter,burnin,priors)
+```
+
+```{r}
+allocationGMM6 = rep(0,dim(pixels)[1])
+for (i in 1:dim(pixels)[1]){
+  allocationGMM6[i] = which.max(resGMM6$alloc[i,])
+}
+df$allocGMM6 = allocationGMM6
+```
+
+```{r}
+ggplot(df)+
+  geom_tile(aes(x=x,y=y,fill = as.factor(allocGMM6))) + scale_fill_viridis_d(option = "H") +
+  theme_void() + theme(legend.position = "bottom") + labs(fill = "cluster")
+
+```
+
+```{r}
+print(table(df$allocGMM6))
+```
+
+
+let us plot the chains
+
+```{r}
+muchain = data.frame("mu" = c(resGMM6$mu[1,1,], resGMM6$mu[2,1,],resGMM6$mu[3,1,], resGMM6$mu[4,1,],resGMM6$mu[1,2,], resGMM6$mu[2,2,],
+                              resGMM6$mu[3,2,], resGMM6$mu[4,2,],resGMM6$mu[1,3,], resGMM6$mu[2,3,],resGMM6$mu[3,3,], resGMM6$mu[4,3,],
+                              resGMM6$mu[1,4,], resGMM6$mu[2,4,],resGMM6$mu[3,4,], resGMM6$mu[4,4,],resGMM6$mu[1,5,], resGMM6$mu[2,5,],
+                              resGMM6$mu[3,5,], resGMM6$mu[4,5,],resGMM6$mu[1,6,], resGMM6$mu[2,6,],resGMM6$mu[3,6,], resGMM6$mu[4,6,]),
+                     "index" = rep(seq(1,iter),d*k),"cluster" =
+                       c(rep(1,d*iter),rep(2,d*iter),rep(3,d*iter),rep(4,d*iter),rep(5,d*iter),rep(6,d*iter)), 
+                     "comp" = rep(c(rep(1,iter),rep(2,iter),rep(3,iter),rep(4,iter)),k))
+
+ggplot(data = muchain,aes(x = index,y = mu,color = as.factor(cluster))) + geom_line() + scale_colour_viridis_d(option = "H") + facet_wrap(~comp,scales = "free") + theme(legend.position = "bottom") + labs(color = "cluster")
+```
+
+```{r,echo=FALSE}
+
+sigma1chain = array(dim = c(d,d,iter))
+sigma2chain = array(dim = c(d,d,iter))
+sigma3chain = array(dim = c(d,d,iter))
+sigma4chain = array(dim = c(d,d,iter))
+sigma5chain = array(dim = c(d,d,iter))
+sigma6chain = array(dim = c(d,d,iter))
+
+for(i in 1:iter){
+  sigma1chain[,,i] = resGMM6$sigma[i][[1]][,,1]
+  sigma2chain[,,i] = resGMM6$sigma[i][[1]][,,2]
+  sigma3chain[,,i] = resGMM6$sigma[i][[1]][,,3]
+  sigma4chain[,,i] = resGMM6$sigma[i][[1]][,,4]
+  sigma5chain[,,i] = resGMM6$sigma[i][[1]][,,5]
+  sigma6chain[,,i] = resGMM6$sigma[i][[1]][,,6]
+}
+
+sigma1 = apply(sigma1chain, c(1,2), mean)
+sigma2 = apply(sigma2chain, c(1,2), mean)
+sigma3 = apply(sigma3chain, c(1,2), mean)
+sigma4 = apply(sigma4chain, c(1,2), mean)
+sigma5 = apply(sigma5chain, c(1,2), mean)
+sigma6 = apply(sigma6chain, c(1,2), mean)
+
+sigmachain = data.frame("sigma" = c(sigma1chain[1,1,], sigma1chain[1,2,],sigma1chain[1,3,], sigma1chain[1,4,],
+                                    sigma1chain[2,1,], sigma1chain[2,2,],sigma1chain[2,3,], sigma1chain[2,4,],
+                                    sigma1chain[3,1,], sigma1chain[3,2,],sigma1chain[3,3,], sigma1chain[4,4,],
+                                    sigma1chain[4,1,], sigma1chain[4,2,],sigma1chain[4,3,], sigma1chain[4,4,],
+                                    sigma2chain[1,1,], sigma2chain[1,2,],sigma2chain[1,3,], sigma2chain[1,4,],
+                                    sigma2chain[2,1,], sigma2chain[2,2,],sigma2chain[2,3,], sigma2chain[2,4,],
+                                    sigma2chain[3,1,], sigma2chain[3,2,],sigma2chain[3,3,], sigma2chain[4,4,],
+                                    sigma2chain[4,1,], sigma2chain[4,2,],sigma2chain[4,3,], sigma2chain[4,4,],
+                                    sigma3chain[1,1,], sigma3chain[1,2,],sigma3chain[1,3,], sigma3chain[1,4,],
+                                    sigma3chain[2,1,], sigma3chain[2,2,],sigma3chain[2,3,], sigma3chain[2,4,],
+                                    sigma3chain[3,1,], sigma3chain[3,2,],sigma3chain[3,3,], sigma3chain[4,4,],
+                                    sigma3chain[4,1,], sigma3chain[4,2,],sigma3chain[4,3,], sigma3chain[4,4,],
+                                    sigma4chain[1,1,], sigma4chain[1,2,],sigma4chain[1,3,], sigma4chain[1,4,],
+                                    sigma4chain[2,1,], sigma4chain[2,2,],sigma4chain[2,3,], sigma4chain[2,4,],
+                                    sigma4chain[3,1,], sigma4chain[3,2,],sigma4chain[3,3,], sigma4chain[4,4,],
+                                    sigma4chain[4,1,], sigma4chain[4,2,],sigma4chain[4,3,], sigma4chain[4,4,],
+                                    sigma5chain[1,1,], sigma5chain[1,2,],sigma5chain[1,3,], sigma5chain[1,4,],
+                                    sigma5chain[2,1,], sigma5chain[2,2,],sigma5chain[2,3,], sigma5chain[2,4,],
+                                    sigma5chain[3,1,], sigma5chain[3,2,],sigma5chain[3,3,], sigma5chain[4,4,],
+                                    sigma5chain[4,1,], sigma5chain[4,2,],sigma5chain[4,3,], sigma5chain[4,4,],
+                                    sigma6chain[1,1,], sigma6chain[1,2,],sigma6chain[1,3,], sigma6chain[1,4,],
+                                    sigma6chain[2,1,], sigma6chain[2,2,],sigma6chain[2,3,], sigma6chain[2,4,],
+                                    sigma6chain[3,1,], sigma6chain[3,2,],sigma6chain[3,3,], sigma6chain[4,4,],
+                                    sigma6chain[4,1,], sigma6chain[4,2,],sigma6chain[4,3,], sigma6chain[4,4,]),
+                        "index" = rep(seq(1,iter),d*d*k),
+                     "cluster" = c(rep(1,d*d*iter),rep(2,d*d*iter),rep(3,d*d*iter),rep(4,d*d*iter),rep(5,d*d*iter),rep(6,d*d*iter)), 
+                     "comp" =rep(c(rep(11,iter),rep(12,iter),rep(13,iter),rep(14,iter),
+                             rep(21,iter),rep(22,iter),rep(23,iter),rep(24,iter),
+                             rep(31,iter),rep(32,iter),rep(33,iter),rep(34,iter),
+                             rep(41,iter),rep(42,iter),rep(43,iter),rep(44,iter)),k))
+
+```
+
+```{r}
+ggplot(data = sigmachain,aes(x = index,y = sigma,color = as.factor(cluster))) + geom_line() + scale_colour_viridis_d(option = "H") +
+  theme(legend.position = "bottom") + facet_wrap(~comp,scales = "free") + labs(color = "cluster")
+```
+
+we still need to plot the covariance autocorr functions
+
+```{r}
+wchain <- data.frame("w" = c(resGMM6$w[,1],resGMM6$w[,2],resGMM6$w[,3],resGMM6$w[,4],resGMM6$w[,5],resGMM6$w[,6]), 
+                     "index" =rep(seq(1,iter),k), "cluster" =c(rep(1,iter),rep(2,iter),rep(3,iter),rep(4,iter),rep(5,iter),rep(6,iter)))
+
+ggplot(data = wchain,aes(x = index,y = w,color = as.factor(cluster))) + geom_line() + scale_colour_viridis_d(option = "H")  +
+  theme(legend.position = "bottom") + labs(color = "cluster")
+```
+
+```{r}
+w = colMeans(resGMM6$w[(burnin+1):iter,])
+```
+
+let's investigate the results:
+
+```{r}
+G12 = ggplot(data = df,aes(x = pca1,y = pca2,color = as.factor(allocGMM6))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "H") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1) + labs(color = "cluster") + theme(legend.position = "none")
+
+G13 = ggplot(data = df,aes(x = pca1,y = pca3,color = as.factor(allocGMM6))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "H") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1) +  labs(color = "cluster") + theme(legend.position = "none")
+
+G14 = ggplot(data = df,aes(x = pca1,y = pca4,color = as.factor(allocGMM6))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "H") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1) + labs(color = "cluster") + theme(legend.position = "none")
+
+G23 = ggplot(data = df,aes(x = pca2,y = pca3,color = as.factor(allocGMM6))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "H") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1) + labs(color = "cluster") + theme(legend.position = "none")
+
+G24 = ggplot(data = df,aes(x = pca2,y = pca4,color = as.factor(allocGMM6))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "H") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1)  + labs(color = "cluster") + theme(legend.position = "none")
+
+G34 = ggplot(data = df,aes(x = pca3,y = pca4,color = as.factor(allocGMM6))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "H") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1) + labs(color = "cluster") + theme(legend.position = "none")
+
+(G12 | G23) / (G13 | G24) / (G14 | G34)
+```
+
+
+
+```{r}
+G12 = ggplot(data = df,aes(x = pca1,y = pca2,color = as.factor(allocGMM6))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "H") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1)  + facet_wrap(~as.factor(allocGMM6),scales = "free") + 
+  labs(color = "cluster") + theme(legend.position = "none")
+
+G13 = ggplot(data = df,aes(x = pca1,y = pca3,color = as.factor(allocGMM6))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "H") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1)  + facet_wrap(~as.factor(allocGMM6),scales = "free") + 
+  labs(color = "cluster") + theme(legend.position = "none")
+
+G14 = ggplot(data = df,aes(x = pca1,y = pca4,color = as.factor(allocGMM6))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "H") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1)  + facet_wrap(~as.factor(allocGMM6),scales = "free") + 
+  labs(color = "cluster") + theme(legend.position = "none")
+
+G23 = ggplot(data = df,aes(x = pca2,y = pca3,color = as.factor(allocGMM6))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "H") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1)  + facet_wrap(~as.factor(allocGMM6),scales = "free") + 
+  labs(color = "cluster") + theme(legend.position = "none")
+
+G24 = ggplot(data = df,aes(x = pca2,y = pca4,color = as.factor(allocGMM6))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "H") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1)  + facet_wrap(~as.factor(allocGMM6),scales = "free") + 
+  labs(color = "cluster") + theme(legend.position = "none")
+
+G34 = ggplot(data = df,aes(x = pca3,y = pca4,color = as.factor(allocGMM6))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "H") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1)  + facet_wrap(~as.factor(allocGMM6),scales = "free") + 
+  labs(color = "cluster") + theme(legend.position = "none")
+
+G12 / G13
+```
+
+
+```{r}
+G23 / G24 
+```
+
+```{r}
+G14 / G34
+```
+
+this is much better
+
+## K = 8 
+
+```{r}
+k = 8
+d = 4
+B0 = diag(100,d,d)
+V0 = diag(10,d,d)
+n0 = 10
+
+priors <- list()
+priors$k <- k
+priors$mu <- matrix(0,d,k)
+priors$mu.sigma <- array(B0,dim = c(d,d,k))
+priors$sigma.V0 <- array(V0,dim = c(d,d,k))
+priors$sigma.n0 <- rep(n0,k)
+priors$lambda <- rep(1,k)
+```
+
+```{r}
+resGMM8 <- GibbsGMM(data,iter,burnin,priors)
+```
+
+```{r}
+allocationGMM8 = rep(0,dim(pixels)[1])
+for (i in 1:dim(pixels)[1]){
+  allocationGMM8[i] = which.max(resGMM8$alloc[i,])
+}
+df$allocGMM8 = allocationGMM8
+```
+
+```{r}
+ggplot(df)+
+  geom_tile(aes(x=x,y=y,fill = as.factor(allocGMM8))) + scale_fill_viridis_d(option = "H") +
+  theme_void() + theme(legend.position = "bottom") + labs(fill = "cluster")
+
+```
+
+```{r}
+print(table(df$allocGMM8))
+```
+
+
+let us plot the chains
+
+```{r}
+muchain = data.frame("mu" = c(resGMM8$mu[1,1,], resGMM8$mu[2,1,],resGMM8$mu[3,1,], resGMM8$mu[4,1,],resGMM8$mu[1,2,], resGMM8$mu[2,2,],
+                              resGMM8$mu[3,2,], resGMM8$mu[4,2,],resGMM8$mu[1,3,], resGMM8$mu[2,3,],resGMM8$mu[3,3,], resGMM8$mu[4,3,],
+                              resGMM8$mu[1,4,], resGMM8$mu[2,4,],resGMM8$mu[3,4,], resGMM8$mu[4,4,],resGMM8$mu[1,5,], resGMM8$mu[2,5,],
+                              resGMM8$mu[3,5,], resGMM8$mu[4,5,],resGMM8$mu[1,6,], resGMM8$mu[2,6,],resGMM8$mu[3,6,], resGMM8$mu[4,6,],
+                              resGMM8$mu[1,7,], resGMM8$mu[2,7,],resGMM8$mu[3,7,], resGMM8$mu[4,7,],resGMM8$mu[1,8,], resGMM8$mu[2,8,],
+                              resGMM8$mu[3,8,], resGMM8$mu[4,8,]),
+                     "index" = rep(seq(1,iter),d*k),"cluster" =
+                       c(rep(1,d*iter),rep(2,d*iter),rep(3,d*iter),rep(4,d*iter),rep(5,d*iter),rep(6,d*iter),rep(7,d*iter),rep(8,d*iter)), 
+                     "comp" = rep(c(rep(1,iter),rep(2,iter),rep(3,iter),rep(4,iter)),k))
+
+ggplot(data = muchain,aes(x = index,y = mu,color = as.factor(cluster))) + geom_line() + scale_colour_viridis_d(option = "H") + facet_wrap(~comp,scales = "free") + theme(legend.position = "bottom") + labs(color = "cluster")
+```
+
+```{r,echo=FALSE}
+
+sigma1chain = array(dim = c(d,d,iter))
+sigma2chain = array(dim = c(d,d,iter))
+sigma3chain = array(dim = c(d,d,iter))
+sigma4chain = array(dim = c(d,d,iter))
+sigma5chain = array(dim = c(d,d,iter))
+sigma6chain = array(dim = c(d,d,iter))
+sigma7chain = array(dim = c(d,d,iter))
+sigma8chain = array(dim = c(d,d,iter))
+
+for(i in 1:iter){
+  sigma1chain[,,i] = resGMM8$sigma[i][[1]][,,1]
+  sigma2chain[,,i] = resGMM8$sigma[i][[1]][,,2]
+  sigma3chain[,,i] = resGMM8$sigma[i][[1]][,,3]
+  sigma4chain[,,i] = resGMM8$sigma[i][[1]][,,4]
+  sigma5chain[,,i] = resGMM8$sigma[i][[1]][,,5]
+  sigma6chain[,,i] = resGMM8$sigma[i][[1]][,,6]
+  sigma7chain[,,i] = resGMM8$sigma[i][[1]][,,7]
+  sigma8chain[,,i] = resGMM8$sigma[i][[1]][,,8]
+}
+
+sigma1 = apply(sigma1chain, c(1,2), mean)
+sigma2 = apply(sigma2chain, c(1,2), mean)
+sigma3 = apply(sigma3chain, c(1,2), mean)
+sigma4 = apply(sigma4chain, c(1,2), mean)
+sigma5 = apply(sigma5chain, c(1,2), mean)
+sigma6 = apply(sigma6chain, c(1,2), mean)
+sigma7 = apply(sigma7chain, c(1,2), mean)
+sigma8 = apply(sigma8chain, c(1,2), mean)
+
+sigmachain = data.frame("sigma" = c(sigma1chain[1,1,], sigma1chain[1,2,],sigma1chain[1,3,], sigma1chain[1,4,],
+                                    sigma1chain[2,1,], sigma1chain[2,2,],sigma1chain[2,3,], sigma1chain[2,4,],
+                                    sigma1chain[3,1,], sigma1chain[3,2,],sigma1chain[3,3,], sigma1chain[4,4,],
+                                    sigma1chain[4,1,], sigma1chain[4,2,],sigma1chain[4,3,], sigma1chain[4,4,],
+                                    sigma2chain[1,1,], sigma2chain[1,2,],sigma2chain[1,3,], sigma2chain[1,4,],
+                                    sigma2chain[2,1,], sigma2chain[2,2,],sigma2chain[2,3,], sigma2chain[2,4,],
+                                    sigma2chain[3,1,], sigma2chain[3,2,],sigma2chain[3,3,], sigma2chain[4,4,],
+                                    sigma2chain[4,1,], sigma2chain[4,2,],sigma2chain[4,3,], sigma2chain[4,4,],
+                                    sigma3chain[1,1,], sigma3chain[1,2,],sigma3chain[1,3,], sigma3chain[1,4,],
+                                    sigma3chain[2,1,], sigma3chain[2,2,],sigma3chain[2,3,], sigma3chain[2,4,],
+                                    sigma3chain[3,1,], sigma3chain[3,2,],sigma3chain[3,3,], sigma3chain[4,4,],
+                                    sigma3chain[4,1,], sigma3chain[4,2,],sigma3chain[4,3,], sigma3chain[4,4,],
+                                    sigma4chain[1,1,], sigma4chain[1,2,],sigma4chain[1,3,], sigma4chain[1,4,],
+                                    sigma4chain[2,1,], sigma4chain[2,2,],sigma4chain[2,3,], sigma4chain[2,4,],
+                                    sigma4chain[3,1,], sigma4chain[3,2,],sigma4chain[3,3,], sigma4chain[4,4,],
+                                    sigma4chain[4,1,], sigma4chain[4,2,],sigma4chain[4,3,], sigma4chain[4,4,],
+                                    sigma5chain[1,1,], sigma5chain[1,2,],sigma5chain[1,3,], sigma5chain[1,4,],
+                                    sigma5chain[2,1,], sigma5chain[2,2,],sigma5chain[2,3,], sigma5chain[2,4,],
+                                    sigma5chain[3,1,], sigma5chain[3,2,],sigma5chain[3,3,], sigma5chain[4,4,],
+                                    sigma5chain[4,1,], sigma5chain[4,2,],sigma5chain[4,3,], sigma5chain[4,4,],
+                                    sigma6chain[1,1,], sigma6chain[1,2,],sigma6chain[1,3,], sigma6chain[1,4,],
+                                    sigma6chain[2,1,], sigma6chain[2,2,],sigma6chain[2,3,], sigma6chain[2,4,],
+                                    sigma6chain[3,1,], sigma6chain[3,2,],sigma6chain[3,3,], sigma6chain[4,4,],
+                                    sigma6chain[4,1,], sigma6chain[4,2,],sigma6chain[4,3,], sigma6chain[4,4,],
+                                    sigma7chain[1,1,], sigma7chain[1,2,],sigma7chain[1,3,], sigma7chain[1,4,],
+                                    sigma7chain[2,1,], sigma7chain[2,2,],sigma7chain[2,3,], sigma7chain[2,4,],
+                                    sigma7chain[3,1,], sigma7chain[3,2,],sigma7chain[3,3,], sigma7chain[4,4,],
+                                    sigma7chain[4,1,], sigma7chain[4,2,],sigma7chain[4,3,], sigma7chain[4,4,],
+                                    sigma8chain[1,1,], sigma8chain[1,2,],sigma8chain[1,3,], sigma8chain[1,4,],
+                                    sigma8chain[2,1,], sigma8chain[2,2,],sigma8chain[2,3,], sigma8chain[2,4,],
+                                    sigma8chain[3,1,], sigma8chain[3,2,],sigma8chain[3,3,], sigma8chain[4,4,],
+                                    sigma8chain[4,1,], sigma8chain[4,2,],sigma8chain[4,3,], sigma8chain[4,4,]),
+                        "index" = rep(seq(1,iter),d*d*k),
+                     "cluster" = c(rep(1,d*d*iter),rep(2,d*d*iter),rep(3,d*d*iter),rep(4,d*d*iter),rep(5,d*d*iter),rep(6,d*d*iter),
+                                   rep(7,d*d*iter),rep(8,d*d*iter)), 
+                     "comp" =rep(c(rep(11,iter),rep(12,iter),rep(13,iter),rep(14,iter),
+                             rep(21,iter),rep(22,iter),rep(23,iter),rep(24,iter),
+                             rep(31,iter),rep(32,iter),rep(33,iter),rep(34,iter),
+                             rep(41,iter),rep(42,iter),rep(43,iter),rep(44,iter)),k))
+
+```
+
+```{r}
+ggplot(data = sigmachain,aes(x = index,y = sigma,color = as.factor(cluster))) + geom_line() + scale_colour_viridis_d(option = "H") +
+  theme(legend.position = "bottom") + facet_wrap(~comp,scales = "free") + labs(color = "cluster")
+```
+
+we still need to plot the covariance autocorr functions
+
+```{r}
+wchain <- data.frame("w" = c(resGMM8$w[,1],resGMM8$w[,2],resGMM8$w[,3],resGMM8$w[,4],resGMM8$w[,5],resGMM8$w[,6],resGMM8$w[,7],
+                             resGMM8$w[,8]), "index" =rep(seq(1,iter),k), 
+                     "cluster" =c(rep(1,iter),rep(2,iter),rep(3,iter),rep(4,iter),rep(5,iter),rep(6,iter),rep(7,iter),rep(8,iter)))
+
+ggplot(data = wchain,aes(x = index,y = w,color = as.factor(cluster))) + geom_line() + scale_colour_viridis_d(option = "H")  +
+  theme(legend.position = "bottom") + labs(color = "cluster")
+```
+
+```{r}
+w = colMeans(resGMM8$w[(burnin+1):iter,])
+```
+
+let's investigate the results:
+
+```{r}
+G12 = ggplot(data = df,aes(x = pca1,y = pca2,color = as.factor(allocGMM8))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "H") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1) + labs(color = "cluster") + theme(legend.position = "none")
+
+G13 = ggplot(data = df,aes(x = pca1,y = pca3,color = as.factor(allocGMM8))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "H") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1) +  labs(color = "cluster") + theme(legend.position = "none")
+
+G14 = ggplot(data = df,aes(x = pca1,y = pca4,color = as.factor(allocGMM8))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "H") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1) + labs(color = "cluster") + theme(legend.position = "none")
+
+G23 = ggplot(data = df,aes(x = pca2,y = pca3,color = as.factor(allocGMM8))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "H") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1) + labs(color = "cluster") + theme(legend.position = "none")
+
+G24 = ggplot(data = df,aes(x = pca2,y = pca4,color = as.factor(allocGMM8))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "H") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1)  + labs(color = "cluster") + theme(legend.position = "none")
+
+G34 = ggplot(data = df,aes(x = pca3,y = pca4,color = as.factor(allocGMM8))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "H") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1) + labs(color = "cluster") + theme(legend.position = "none")
+
+(G12 | G23) / (G13 | G24) / (G14 | G34)
+```
+
+
+
+```{r}
+G12 = ggplot(data = df,aes(x = pca1,y = pca2,color = as.factor(allocGMM8))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "H") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1)  + facet_wrap(~as.factor(allocGMM8),scales = "free") + 
+  labs(color = "cluster") + theme(legend.position = "none")
+
+G13 = ggplot(data = df,aes(x = pca1,y = pca3,color = as.factor(allocGMM8))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "H") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1)  + facet_wrap(~as.factor(allocGMM8),scales = "free") + 
+  labs(color = "cluster") + theme(legend.position = "none")
+
+G14 = ggplot(data = df,aes(x = pca1,y = pca4,color = as.factor(allocGMM8))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "H") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1)  + facet_wrap(~as.factor(allocGMM8),scales = "free") + 
+  labs(color = "cluster") + theme(legend.position = "none")
+
+G23 = ggplot(data = df,aes(x = pca2,y = pca3,color = as.factor(allocGMM8))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "H") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1)  + facet_wrap(~as.factor(allocGMM8),scales = "free") + 
+  labs(color = "cluster") + theme(legend.position = "none")
+
+G24 = ggplot(data = df,aes(x = pca2,y = pca4,color = as.factor(allocGMM8))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "H") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1)  + facet_wrap(~as.factor(allocGMM8),scales = "free") + 
+  labs(color = "cluster") + theme(legend.position = "none")
+
+G34 = ggplot(data = df,aes(x = pca3,y = pca4,color = as.factor(allocGMM8))) + geom_point(alpha = 0.2) + scale_colour_viridis_d(option = "H") + theme(legend.position = "bottom") +  stat_ellipse(linewidth = 1)  + facet_wrap(~as.factor(allocGMM8),scales = "free") + 
+  labs(color = "cluster") + theme(legend.position = "none")
+
+G12 / G13
+```
+
+
+```{r}
+G23 / G24 
+```
+
+```{r}
+G14 / G34
+```
+

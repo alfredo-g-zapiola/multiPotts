@@ -1,0 +1,375 @@
+---
+title: "Beta Identification"
+author: Simone Colombara, Alessia Cotroneo, Francesco De Caro, Riccardo Morandi, Chiara   Schembri,
+  Alfredo Zapiola
+date: "2022-12-13"
+output: html_document
+---
+```{r libraries, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(rayshader)
+library(patchwork)
+library(ggplot2)
+library(plot.matrix)
+library(bayesImageS)
+library(coda)
+library(viridis)
+```
+
+importing data pixel structure
+
+```{r}
+D = read.table("/Users/macbookpro/Documents/Bayesian Statistics/Project/Raw_data/LIPIDI/78 variabili/101_lipidi-PreProcessed-IM-Step1-Step2-Step4-Step5-101.txt")
+D0 = D
+D0[is.na(D0)] = 0
+
+pixels = read.table("/Users/macbookpro/Documents/Bayesian Statistics/Project/Raw_data/LIPIDI/78 variabili/101_lipidi-PreProcessed-XYCoordinates-Step1-Step2-Step4-Step5-101.txt")
+colnames(D0) = substr(colnames(D0),1,4)
+colnames(pixels) = c("x","y")
+
+Data_long = as_tibble(data.frame( pixels, D0 ))
+max_number_of_pixels = apply(Data_long[,1:2],2,max)
+
+```
+
+building auxiliary mask to pass just the measured pixels to the functions
+
+```{r}
+mask <-matrix(0,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  mask[pixels[i,1],pixels[i,2]] = 1
+}
+
+```
+
+# beta = betacritic
+
+## simulating data
+
+we first decide to generate synthetic data using the Swendsen & Wang algorithm, starting with a full matrix to get reliable patterns
+
+```{r}
+full_mask <-matrix(1,max_number_of_pixels[2],max_number_of_pixels[2])
+
+full_neigh <- getNeighbors(mask = full_mask, c(2,2,0,0))
+full_blocks <- getBlocks(mask = full_mask, 2)
+
+```
+
+```{r}
+k = 3
+betacritic = log(1 + sqrt(k))
+
+sw_res <- swNoData(betacritic, k, full_neigh, full_blocks, niter = 1000, random = TRUE)
+
+sinth_clust <- matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:max_number_of_pixels[1]){
+  for(j in 1:max_number_of_pixels[2]){
+  sinth_clust[i,j] = which.max(sw_res$z[(i-1)*max_number_of_pixels[2]+j,])
+  }
+}
+
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(sinth_clust, border=NA,asp = TRUE,col = viridis,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+
+```
+
+```{r}
+allocs = rep(0,dim(pixels)[1])
+for(i in 1:dim(pixels)[1]){
+  allocs[i] = sinth_clust[pixels[i,1],pixels[i,2]] 
+}
+
+plot_allocs =  matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  plot_allocs[pixels[i,1],pixels[i,2]] = allocs[i]  
+}
+
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(plot_allocs, border=NA,asp = TRUE,col = viridis,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```
+
+generating the data 
+
+```{r}
+mu1 = -4
+mu2 = 0
+mu3 = 5
+
+s1 = 3
+s2 = 2
+s3 = 1
+
+t = table(allocs)
+
+n1 = t[1]
+n2 = t[2]
+n3 = t[3]
+
+x1 = rnorm(n1,mean = mu1,sd = s1)
+x2 = rnorm(n2,mean = mu2,sd = s2)
+x3 = rnorm(n3,mean = mu3,sd = s3)
+
+c1 = 1
+c2 = 1
+c3 = 1
+
+data = rep(0,length(allocs))
+for(i in 1:length(data)){
+  if(allocs[i]==1){
+      data[i] = x1[c1]
+      c1 = c1+1
+    }
+    else if(allocs[i]==2){
+      data[i] = x2[c2]
+      c2 = c2+1
+    }
+    else if (allocs[i]==3){
+      data[i] = x3[c3]
+      c3 = c3+1
+    }
+}
+
+plot_data =  matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  plot_data[pixels[i,1],pixels[i,2]] = data[i]  
+}
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(plot_data, border=NA,asp = TRUE,col = viridis,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```
+
+
+```{r}
+q <- 3
+betacritic = log(1 + sqrt(q))
+neigh <- getNeighbors(mask = mask, c(2,2,0,0))
+block <- getBlocks(mask = mask, 2)
+
+priors <- list()
+priors$k <- q
+priors$mu <- c(-5,0,5)
+priors$mu.sd <- rep(3,q)
+priors$sigma <- rep(2,q)
+priors$sigma.nu <- rep(1.5,q)
+priors$beta <- c(0,2*betacritic)
+
+mh <- list(algorithm="pseudolikelihood", bandwidth=1)
+```
+
+
+```{r, results='hide'}
+res <- mcmcPotts(data, neigh, block, priors, mh, 10000, 5000)
+```
+
+```{r}
+muchain = mcmc(res$mu)
+varnames(muchain)<-c("mu_1","mu_2","mu_3")
+sigmachain = mcmc(res$sigma)
+varnames(sigmachain)<-c("sigma_1","sigma_2","sigma_3")
+betachain = mcmc(res$beta)
+varnames(betachain)<-c("beta")
+sumchain  = mcmc(res$sum)
+varnames(sumchain)<-c("sum")
+```
+
+### beta
+
+```{r}
+summary(betachain)
+batchSE(betachain)
+effectiveSize(betachain)
+
+plot(betachain)
+
+autocorr.plot(betachain)
+```
+we can correctly identify the beta eve if beta = betacritic this suggests that the beta in our data is above betacritic
+
+## plot
+
+```{r}
+clustering <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clustering[pixels[i,1],pixels[i,2]] = res$e[i]
+}
+
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(clustering, border=NA,asp = TRUE,col = rainbow)
+```
+
+```{r}
+diff = 0
+
+for(i in 1:dim(pixels)[1]){
+  if(clustering[pixels[i,1],pixels[i,2]] != plot_allocs[pixels[i,1],pixels[i,2]])
+    diff = diff+1
+}
+diff 
+error = diff/dim(pixels)[1]
+error
+
+```
+
+# beta > betacritic
+
+## simulating data
+
+we first decide to generate synthetic data using the Swendsen & Wang algorithm, starting with a full matrix to get reliable patterns
+
+```{r}
+k = 3
+betacritic = log(1 + sqrt(k))
+beta = 1.001*betacritic
+sw_res <- swNoData(beta, k, full_neigh, full_blocks, niter = 1000, random = TRUE)
+
+sinth_clust <- matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:max_number_of_pixels[1]){
+  for(j in 1:max_number_of_pixels[2]){
+  sinth_clust[i,j] = which.max(sw_res$z[(i-1)*max_number_of_pixels[2]+j,])
+  }
+}
+
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(sinth_clust, border=NA,asp = TRUE,col = viridis,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+
+```
+
+```{r}
+allocs = rep(0,dim(pixels)[1])
+for(i in 1:dim(pixels)[1]){
+  allocs[i] = sinth_clust[pixels[i,1],pixels[i,2]] 
+}
+
+plot_allocs =  matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  plot_allocs[pixels[i,1],pixels[i,2]] = allocs[i]  
+}
+
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(plot_allocs, border=NA,asp = TRUE,col = viridis,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```
+
+generating the data 
+even a little step witth beta creates a lot of uniformity in the data
+
+```{r}
+mu1 = -4
+mu2 = 0
+mu3 = 5
+
+s1 = 3
+s2 = 2
+s3 = 1
+
+t = table(allocs)
+
+n1 = t[1]
+n2 = t[2]
+n3 = t[3]
+
+x1 = rnorm(n1,mean = mu1,sd = s1)
+x2 = rnorm(n2,mean = mu2,sd = s2)
+x3 = rnorm(n3,mean = mu3,sd = s3)
+
+c1 = 1
+c2 = 1
+c3 = 1
+
+data = rep(0,length(allocs))
+for(i in 1:length(data)){
+  if(allocs[i]==1){
+      data[i] = x1[c1]
+      c1 = c1+1
+    }
+    else if(allocs[i]==2){
+      data[i] = x2[c2]
+      c2 = c2+1
+    }
+    else if (allocs[i]==3){
+      data[i] = x3[c3]
+      c3 = c3+1
+    }
+}
+
+plot_data =  matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  plot_data[pixels[i,1],pixels[i,2]] = data[i]  
+}
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(plot_data, border=NA,asp = TRUE,col = viridis,axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+```
+
+
+```{r}
+q <- 3
+betacritic = log(1 + sqrt(q))
+neigh <- getNeighbors(mask = mask, c(2,2,0,0))
+block <- getBlocks(mask = mask, 2)
+
+priors <- list()
+priors$k <- q
+priors$mu <- c(-5,0,5)
+priors$mu.sd <- rep(3,q)
+priors$sigma <- rep(2,q)
+priors$sigma.nu <- rep(1.5,q)
+priors$beta <- c(0,2*betacritic)
+
+mh <- list(algorithm="pseudolikelihood", bandwidth=1)
+```
+
+
+```{r, results='hide'}
+res <- mcmcPotts(data, neigh, block, priors, mh, 10000, 5000)
+```
+
+```{r}
+muchain = mcmc(res$mu)
+varnames(muchain)<-c("mu_1","mu_2","mu_3")
+sigmachain = mcmc(res$sigma)
+varnames(sigmachain)<-c("sigma_1","sigma_2","sigma_3")
+betachain = mcmc(res$beta)
+varnames(betachain)<-c("beta")
+sumchain  = mcmc(res$sum)
+varnames(sumchain)<-c("sum")
+```
+
+### beta
+
+```{r}
+summary(betachain)
+batchSE(betachain)
+effectiveSize(betachain)
+
+plot(betachain)
+
+autocorr.plot(betachain)
+```
+we can correctly identify the beta eve if beta = betacritic this suggests that the beta in our data is above betacritic
+
+## plot
+
+```{r}
+clustering <-matrix(NA,max_number_of_pixels[1],max_number_of_pixels[2])
+for(i in 1:dim(pixels)[1]){
+  clustering[pixels[i,1],pixels[i,2]] = which.max(res$alloc[i,])
+}
+
+par(mar=c(5.1, 4.1, 4.1, 4.1))
+plot(clustering, border=NA,asp = TRUE,col = rainbow)
+```
+
+we can still obtain the right pattern
+
+```{r}
+diff = 0
+
+for(i in 1:dim(pixels)[1]){
+  if(clustering[pixels[i,1],pixels[i,2]] != plot_allocs[pixels[i,1],pixels[i,2]])
+    diff = diff+1
+}
+diff 
+error = diff/dim(pixels)[1]
+error
+
+```
