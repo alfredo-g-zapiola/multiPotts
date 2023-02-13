@@ -26,9 +26,9 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
-// GibbfPotts
-SEXP GibbfPotts(SEXP yS, SEXP betaS, SEXP muS, SEXP sigmaS, SEXP nS, SEXP bS, SEXP prS, SEXP itS, SEXP biS, SEXP salitS);
-RcppExport SEXP _multiPotts_GibbfPotts(SEXP ySSEXP, SEXP betaSSEXP, SEXP muSSEXP, SEXP sigmaSSEXP, SEXP nSSEXP, SEXP bSSEXP, SEXP prSSEXP, SEXP itSSEXP, SEXP biSSEXP, SEXP salitSSEXP) {
+// GibbPotts
+SEXP GibbPotts(SEXP yS, SEXP betaS, SEXP muS, SEXP sigmaS, SEXP nS, SEXP bS, SEXP prS, SEXP itS, SEXP biS, SEXP salitS);
+RcppExport SEXP _multiPotts_GibbPotts(SEXP ySSEXP, SEXP betaSSEXP, SEXP muSSEXP, SEXP sigmaSSEXP, SEXP nSSEXP, SEXP bSSEXP, SEXP prSSEXP, SEXP itSSEXP, SEXP biSSEXP, SEXP salitSSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -42,7 +42,7 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< SEXP >::type itS(itSSEXP);
     Rcpp::traits::input_parameter< SEXP >::type biS(biSSEXP);
     Rcpp::traits::input_parameter< SEXP >::type salitS(salitSSEXP);
-    rcpp_result_gen = Rcpp::wrap(GibbfPotts(yS, betaS, muS, sigmaS, nS, bS, prS, itS, biS, salitS));
+    rcpp_result_gen = Rcpp::wrap(GibbPotts(yS, betaS, muS, sigmaS, nS, bS, prS, itS, biS, salitS));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -103,7 +103,7 @@ END_RCPP
 
 static const R_CallMethodDef CallEntries[] = {
     {"_multiPotts_GibbsGMM", (DL_FUNC) &_multiPotts_GibbsGMM, 5},
-    {"_multiPotts_GibbfPotts", (DL_FUNC) &_multiPotts_GibbfPotts, 10},
+    {"_multiPotts_GibbPotts", (DL_FUNC) &_multiPotts_GibbPotts, 10},
     {"_multiPotts_mcmcPotts1d", (DL_FUNC) &_multiPotts_mcmcPotts1d, 8},
     {"_multiPotts_mcmcPottsmd", (DL_FUNC) &_multiPotts_mcmcPottsmd, 8},
     {"_multiPotts_MCMCPotts", (DL_FUNC) &_multiPotts_MCMCPotts, 8},

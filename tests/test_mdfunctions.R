@@ -103,14 +103,16 @@ initmu = cbind(initmu1,initmu2,initmu3,initmu4)
 initsigma = array(c(initsigma1,initsigma2,initsigma3,initsigma4),dim = c(d,d,k))
 iter = 10000
 burnin = 3000
+salit = 1000
 r1 = diff(range(data[1,]))
 r2 = diff(range(data[2,]))
 M = matrix(c(r1^2,0,0,r2^2),2,2)
 EV = matrix(c(var(data[1,]),cov(data[1,],data[2,]),cov(data[1,],data[2,]),var(data[2,])),2,2)
 
-# gibbspotts
+sourceCpp("/Users/macbookpro/Documents/Bayesian Statistics/Project/Cpp_code/all_functions.cpp")
 
-sourceCpp("C:/Users/Francesco/OneDrive - Politecnico di Milano/Bayesian Statistics Project/Codice/Cpp_code/GibbsSampler_updated.cpp")
+# gibbspotts
+sourceCpp("/Users/macbookpro/Documents/Bayesian Statistics/Project/Cpp_code/Gibbs_salso_output.cpp")
 
 priors <- list()
 priors$k <- k
@@ -119,7 +121,9 @@ priors$mu.sigma <- array(M,dim = c(d,d,k))
 priors$sigma.V0 <- array(EV,dim = c(d,d,k))
 priors$sigma.n0 <- rep(4+d,k)
 
-system.time(results <- GibbsPotts(data,betacritic,initmu,initsigma,neigh,block,priors,iter,burnin))
+system.time(results <- GibbsPotts(data,betacritic,initmu,initsigma,neigh,block,priors,iter,burnin,salit))
+# 73 second wih the base implementation
+# 68 seconds with first parallelization of mdupdate_stats
 
 res_clust = matrix(0,m,m)
 for(i in 1:m){
@@ -133,12 +137,15 @@ par(mar=c(5.1, 4.1, 4.1, 4.1))
 plot(res_clust, border=NA,asp = TRUE,col = viridis(k),axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
 
 missclass = matrix(0,m,m)
+misscalssid = rep(0,m*m)
+
 diff = 0
 for(i in 1:m){
   for(j in 1:m){
     if(!(res_clust[i,j]==sinth_clust[i,j])){
       diff = diff+1
       missclass[i,j] = 1
+      misscalssid[(i-1)*m +j] = 1
     }
   }
 }
@@ -150,6 +157,17 @@ error
 x11()
 par(mar=c(5.1, 4.1, 4.1, 4.1))
 plot(missclass, border=NA,asp = TRUE,col = viridis(k),axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
+
+x11()
+plot(data[1,],data[2,])
+for(i in 1:m){
+  for(j in 1:m){
+    if(misscalssid[(i-1)*m +j] ==1){
+      points(data[1,(i-1)*m +j],data[2,(i-1)*m +j],col = 'red')
+      
+    }
+  }
+}
 
 mu1chain = mcmc(t(results$mu[,1,]))
 mu2chain = mcmc(t(results$mu[,2,]))
@@ -173,12 +191,39 @@ for(i in seq(1,iter)){
 s1chain = mcmc(sigma111)
 plot(s1chain)
 
+# salso test 
+
+library(salso)
+
+# test data
+data(iris.clusterings)
+draws <- iris.clusterings
+est <- salso(draws, nCores=1)
+summ <- summary(est)
+x11()
+plot(summ, type="heatmap")
+plot(summ, type="mds")
+plot(summ, type="pairs", data=iris)
+plot(summ, type="dendrogram")
+
+# our data
+system.time(sres <- salso(results$salso_hist, loss = binder(), nRuns = 1))
+# 136 sec
+system.time(salsumm <- summary(sres))
+#
+x11()
+plot(salsumm, type="heatmap")
+plot(salsumm, type="mds")
+plot(salsumm, type="pairs", data=iris)
+plot(salsumm, type="dendrogram")
+
+
 
 
 # mcmcpotts
 
 
-sourceCpp("C:/Users/Francesco/OneDrive - Politecnico di Milano/Bayesian Statistics Project/Codice/Cpp_code/mcmcPotts.cpp")
+sourceCpp("/Users/macbookpro/Documents/Bayesian Statistics/Project/Cpp_code/mcmcPotts.cpp")
 
 priorsmcmc <- list()
 priorsmcmc$k <- k
@@ -192,7 +237,7 @@ mh <- list(bandwidth=1,init = 1)
 
 # the problem is that the mus get some NAN and therefor get excluded
 #chek gibbslabels and gibbsbeta 
-system.time(resmcmc <- MCMCPotts(data,neigh,block,iter,burnin,priorsmcmc,mh))
+system.time(resmcmc <- MCMCPotts(data,neigh,block,iter,burnin,priorsmcmc,mh,salit))
 
 res_clustmcmc = matrix(0,m,m)
 for(i in 1:m){
@@ -223,7 +268,8 @@ x11()
 par(mar=c(5.1, 4.1, 4.1, 4.1))
 plot(res_clustmcmc2, border=NA,asp = TRUE,col = viridis(k),axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
 
-
+missclass = matrix(0,m,m)
+misscalssid = rep(0,m*m)
 diff = 0
 for(i in 1:m){
   for(j in 1:m){
@@ -253,7 +299,7 @@ autocorr.plot(mu4chain)
 
 
 #GMM test
-sourceCpp("C:/Users/Francesco/OneDrive - Politecnico di Milano/Bayesian Statistics Project/Codice/Cpp_code/GibbsGMM.cpp")
+sourceCpp("/Users/macbookpro/Documents/Bayesian Statistics/Project/Cpp_code/GibbsGMM.cpp")
 
 priorsGMM <- list()
 priorsGMM$k <- k
@@ -263,7 +309,7 @@ priorsGMM$sigma.V0 <- array(EV,dim = c(d,d,k))
 priorsGMM$sigma.n0 <- rep(4+d,k)
 priorsGMM$lambda <- rep(1,k)
 
-system.time(resGMM <- gibbsGMMmd(data,iter,burnin,priorsGMM))
+system.time(resGMM <- GibbsGMM(data,priorsGMM,iter,burnin,salit))
 
 res_clustgmm = matrix(0,m,m)
 for(i in 1:m){
@@ -280,12 +326,12 @@ plot(res_clustgmm, border=NA,asp = TRUE,col = viridis(k),axis.col=NULL, axis.row
 res_clustgmm2 = res_clustgmm
 for(i in 1:m){
   for(j in 1:m){
-    if(res_clustgmm[i,j]==3)
-      res_clustgmm2[i,j] = 1
-    if(res_clustgmm[i,j]==2)
-      res_clustgmm2[i,j] = 3
     if(res_clustgmm[i,j]==1)
-      res_clustgmm2[i,j] = 2
+      res_clustgmm2[i,j] = 4
+    else if(res_clustgmm[i,j]==4)
+      res_clustgmm2[i,j] = 3
+    else if(res_clustgmm[i,j]==3)
+      res_clustgmm2[i,j] = 1
   }
 }
 
@@ -293,18 +339,34 @@ x11()
 par(mar=c(5.1, 4.1, 4.1, 4.1))
 plot(res_clustgmm2, border=NA,asp = TRUE,col = viridis(k),axis.col=NULL, axis.row=NULL, xlab='', ylab='',key = NULL)
 
-
+missclass = matrix(0,m,m)
+misscalssid = rep(0,m*m)
 diff = 0
 for(i in 1:m){
   for(j in 1:m){
-    if(!(res_clustgmm2[i,j]==sinth_clust[i,j]))
+    if(!(res_clustgmm2[i,j]==sinth_clust[i,j])){
       diff = diff+1
+      missclass[i,j] = 1
+      misscalssid[(i-1)*m +j] = 1
+    }
   }
 }
+
+x11()
+plot(data[1,],data[2,])
+for(i in 1:m){
+  for(j in 1:m){
+    if(misscalssid[(i-1)*m +j] ==1){
+      points(data[1,(i-1)*m +j],data[2,(i-1)*m +j],col = 'red')
+    }
+  }
+}
+
 
 diff
 error = diff/n
 error
+
 
 mu1chain = mcmc(t(resGMM$mu[,1,]),start = burnin)
 mu2chain = mcmc(t(resGMM$mu[,2,]),start = burnin)
@@ -321,4 +383,4 @@ autocorr.plot(mu3chain)
 plot(mu4chain)
 autocorr.plot(mu4chain)
 
-sourceCpp("C:/Users/Francesco/OneDrive - Politecnico di Milano/Bayesian Statistics Project/Codice/Cpp_code/All_in_one.cpp")
+sourceCpp("/Users/macbookpro/Documents/Bayesian Statistics/Project/Cpp_code/All_in_one.cpp")

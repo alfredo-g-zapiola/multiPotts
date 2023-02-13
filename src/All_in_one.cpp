@@ -1056,7 +1056,7 @@ SEXP gibbsPottsmd(SEXP yS, SEXP betaS, SEXP muS, SEXP sigmaS, SEXP nS, SEXP bS, 
 //' @param salitS number of allocactions to save in a salso compatible manner (matrix each row is a iteration
 //'@return List with the posterior samples of each random variable
 // [[Rcpp::export]]
-SEXP GibbfPotts(SEXP yS, SEXP betaS, SEXP muS, SEXP sigmaS, SEXP nS, SEXP bS, SEXP prS, SEXP itS, SEXP biS, SEXP salitS) {
+SEXP GibbPotts(SEXP yS, SEXP betaS, SEXP muS, SEXP sigmaS, SEXP nS, SEXP bS, SEXP prS, SEXP itS, SEXP biS, SEXP salitS) {
   if(Rf_isMatrix(yS))
     return gibbsPottsmd(yS, betaS, muS, sigmaS, nS, bS, prS, itS, biS, salitS);
   else if(Rf_isVector(yS))

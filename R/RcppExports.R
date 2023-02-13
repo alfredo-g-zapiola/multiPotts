@@ -73,8 +73,8 @@ GibbsGMM <- function(yS, prS, itS, biS, salitS) {
 #' @param biS burn in iterations
 #' @param salitS number of allocactions to save in a salso compatible manner (matrix each row is a iteration
 #'@return List with the posterior samples of each random variable
-GibbfPotts <- function(yS, betaS, muS, sigmaS, nS, bS, prS, itS, biS, salitS) {
-    .Call(`_multiPotts_GibbfPotts`, yS, betaS, muS, sigmaS, nS, bS, prS, itS, biS, salitS)
+GibbPotts <- function(yS, betaS, muS, sigmaS, nS, bS, prS, itS, biS, salitS) {
+    .Call(`_multiPotts_GibbPotts`, yS, betaS, muS, sigmaS, nS, bS, prS, itS, biS, salitS)
 }
 
 #' 

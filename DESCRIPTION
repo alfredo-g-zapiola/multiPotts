@@ -3,7 +3,7 @@ Type: Package
 Title: Multivariate Potts model
 Version: 1.0
 Date: 2022-11-29
-Author: R. Morandi, A. G.Zapiola, S. Colombara, F. De Caro, C. Shembri
+Author: R. Morandi, A. G.Zapiola, S. Colombara, F. De Caro, A. Cotroneo, C. Shembri
 Maintainer: Riccardo Morandi <riccardo3.morandi@mail.polimi.it>, Alfredo G. Zapiola <agimenezzapiola@gmail.com>
 Description: A library that fits the potts model utilising a mixture of multivariate normal distributions. The MCMC is run with Rccp.
 License: GPL (>= 2)
